@@ -1,0 +1,393 @@
+const express = require('express');
+const { body, validationResult } = require('express-validator');
+const scrapingService = require('../services/scrapingService');
+const knowledgeBaseSync = require('../services/knowledgeBaseSync');
+const logger = require('../utils/logger');
+
+const router = express.Router();
+
+/**
+ * Scrape a single page
+ * POST /api/scraping/scrape
+ */
+router.post('/scrape', [
+  body('url')
+    .isURL()
+    .withMessage('Must be a valid URL')
+    .customSanitizer(value => {
+      // Remove @ symbols and other unwanted characters from the beginning
+      let cleanUrl = value.trim().replace(/^[@#]+/, '');
+      
+      // Ensure it starts with http:// or https://
+      if (!cleanUrl.match(/^https?:\/\//)) {
+        cleanUrl = 'https://' + cleanUrl;
+      }
+      
+      return cleanUrl;
+    }),
+  body('options')
+    .optional()
+    .isObject()
+    .withMessage('Options must be an object')
+], async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { url, options = {} } = req.body;
+
+    logger.info(`Received scraping request for: ${url}`);
+
+    // Start scraping
+    const result = await scrapingService.scrapeWebsite(url, options);
+
+    res.json({
+      success: true,
+      message: 'Website scraped successfully',
+      data: {
+        url: result.url,
+        title: result.title,
+        timestamp: result.timestamp,
+        metadata: result.metadata,
+        chunksExtracted: result.content.chunks.length
+      }
+    });
+
+  } catch (error) {
+    logger.error('Scraping error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to scrape website',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get scraping status
+ * GET /api/scraping/status/:domain?
+ */
+router.get('/status/:domain?', async (req, res) => {
+  try {
+    const { domain } = req.params;
+
+    if (domain) {
+      const history = await scrapingService.getScrapingHistory(domain);
+      res.json({
+        success: true,
+        domain,
+        history
+      });
+    } else {
+      res.json({
+        success: true,
+        message: 'Scraping service is running',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+  } catch (error) {
+    logger.error('Error getting scraping status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get scraping status',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get available scraping options
+ * GET /api/scraping/options
+ */
+router.get('/options', (req, res) => {
+  res.json({
+    success: true,
+    options: {
+      maxTimeout: 30000,
+      waitForNetworkIdle: true,
+      extractImages: false,
+      extractLinks: false,
+      chunkSize: 500,
+      supportedFormats: ['html', 'text']
+    }
+  });
+});
+
+/**
+ * Discover all pages on a website
+ * POST /api/scraping/discover
+ */
+router.post('/discover', [
+  body('url')
+    .isURL()
+    .withMessage('Must be a valid URL')
+    .customSanitizer(value => {
+      // Remove @ symbols and other unwanted characters from the beginning
+      let cleanUrl = value.trim().replace(/^[@#]+/, '');
+      
+      // Ensure it starts with http:// or https://
+      if (!cleanUrl.match(/^https?:\/\//)) {
+        cleanUrl = 'https://' + cleanUrl;
+      }
+      
+      return cleanUrl;
+    }),
+  body('options')
+    .optional()
+    .isObject()
+    .withMessage('Options must be an object')
+], async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { url, options = {} } = req.body;
+
+    logger.info(`Received page discovery request for: ${url}`);
+
+    // Start page discovery
+    const result = await scrapingService.discoverWebsitePages(url, options);
+
+    res.json({
+      success: true,
+      message: 'Page discovery completed successfully',
+      data: {
+        domain: result.domain,
+        totalPages: result.totalPages,
+        sitemapPages: result.sitemapPages,
+        crawledPages: result.crawledPages,
+        discoveredUrls: result.discoveredUrls.slice(0, 10), // Show first 10 URLs as sample
+        recommendation: {
+          suggestedMaxPages: result.totalPages,
+          estimatedTime: Math.ceil(result.totalPages * 2), // Rough estimate: 2 seconds per page
+          message: `Found ${result.totalPages} pages. Consider setting maxPages if you want to limit scraping.`
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Page discovery error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to discover pages',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Crawl and scrape entire website
+ * POST /api/scraping/crawl
+ */
+router.post('/crawl', [
+  body('url')
+    .isURL()
+    .withMessage('Must be a valid URL')
+    .customSanitizer(value => {
+      // Remove @ symbols and other unwanted characters from the beginning
+      let cleanUrl = value.trim().replace(/^[@#]+/, '');
+      
+      // Ensure it starts with http:// or https://
+      if (!cleanUrl.match(/^https?:\/\//)) {
+        cleanUrl = 'https://' + cleanUrl;
+      }
+      
+      return cleanUrl;
+    }),
+  body('options')
+    .optional()
+    .isObject()
+    .withMessage('Options must be an object'),
+  body('options.maxPages')
+    .optional()
+    .isInt({ min: 1, max: 10000 })
+    .withMessage('Max pages must be between 1 and 10,000'),
+  body('options.delay')
+    .optional()
+    .isInt({ min: 0, max: 10000 })
+    .withMessage('Delay must be between 0 and 10000ms'),
+  body('options.followExternalLinks')
+    .optional()
+    .isBoolean()
+    .withMessage('Follow external links must be boolean'),
+  body('options.batchSize')
+    .optional()
+    .isInt({ min: 1, max: 10 })
+    .withMessage('Batch size must be between 1 and 10'),
+  body('options.deepExtraction')
+    .optional()
+    .isBoolean()
+    .withMessage('Deep extraction must be a boolean'),
+], async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { url, options = {} } = req.body;
+
+    logger.info(`Received comprehensive crawling request for: ${url}`);
+
+    // Set default crawling options
+    const crawlOptions = {
+      maxPages: options.maxPages || 50,
+      delay: options.delay || 1000,
+      followExternalLinks: options.followExternalLinks || false,
+      respectRobots: options.respectRobots !== false,
+      ...options
+    };
+
+    // Start comprehensive crawling and scraping
+    const result = await scrapingService.crawlAndScrapeWebsite(url, crawlOptions);
+
+    res.json({
+      success: true,
+      message: 'Website crawling completed successfully',
+      data: {
+        domain: result.domain,
+        timestamp: result.timestamp,
+        crawlingStats: result.crawlingStats,
+        contentStats: result.contentStats,
+        discoveryStats: result.discoveryStats,
+        totalPagesScraped: result.scrapedPages.length,
+        totalChunks: result.contentStats.totalChunks,
+        successRate: result.crawlingStats.successRate,
+        errors: result.errors.length > 0 ? result.errors.slice(0, 5) : [], // Show first 5 errors
+        summary: {
+          pagesDiscovered: result.discoveryStats?.totalPagesDiscovered || result.crawlingStats.totalPagesDiscovered,
+          pagesScraped: result.scrapedPages.length,
+          limitApplied: result.discoveryStats?.limitApplied || false,
+          efficiency: `${result.crawlingStats.successRate} success rate`
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Comprehensive crawling error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to crawl website',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get crawling progress (for future implementation)
+ * GET /api/scraping/crawl/progress/:jobId
+ */
+router.get('/crawl/progress/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  
+  // This would implement real-time progress tracking
+  // For now, return a placeholder
+  res.json({
+    success: true,
+    data: {
+      jobId,
+      status: 'completed',
+      progress: 100,
+      message: 'Crawling completed'
+    }
+  });
+});
+
+/**
+ * Check knowledge base sync status
+ * GET /api/scraping/sync/status/:jobId
+ */
+router.get('/sync/status/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    
+    const status = await knowledgeBaseSync.checkSyncStatus(jobId);
+    
+    res.json({
+      success: true,
+      data: {
+        jobId: status.jobId,
+        status: status.status,
+        startedAt: status.startedAt,
+        updatedAt: status.updatedAt,
+        failureReasons: status.failureReasons,
+        isComplete: status.status === 'COMPLETE',
+        isFailed: status.status === 'FAILED',
+        isInProgress: ['IN_PROGRESS', 'STARTING'].includes(status.status)
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Error checking sync status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check sync status',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Trigger manual knowledge base sync
+ * POST /api/scraping/sync
+ */
+router.post('/sync', [
+  body('domain')
+    .isString()
+    .withMessage('Domain is required')
+    .trim()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { domain } = req.body;
+    
+    logger.info(`Manual knowledge base sync requested for: ${domain}`);
+    
+    const result = await knowledgeBaseSync.fullSync(domain, false);
+    
+    res.json({
+      success: true,
+      message: 'Knowledge base sync initiated',
+      data: {
+        jobId: result.jobId,
+        status: result.status,
+        startedAt: result.startedAt,
+        domain
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Error initiating manual sync:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to initiate sync',
+      message: error.message
+    });
+  }
+});
+
+module.exports = router;

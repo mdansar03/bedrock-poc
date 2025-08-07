@@ -1,0 +1,48 @@
+{
+  "name": "oralia-ai-chatbot",
+  "version": "1.0.0",
+  "description": "Website scraping and Bedrock-powered chatbot application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:frontend\"",
+    "install:all": "npm install && cd frontend && npm install"
+  },
+  "keywords": [
+    "aws",
+    "bedrock",
+    "chatbot",
+    "scraping",
+    "rag"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-bedrock": "^3.478.0",
+    "@aws-sdk/client-bedrock-agent": "^3.478.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.478.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.478.0",
+    "@aws-sdk/client-s3": "^3.478.0",
+    "aws-sdk": "^2.1491.0",
+    "axios": "^1.11.0",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "multer": "^1.4.5-lts.1",
+    "puppeteer": "^21.6.1",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.2"
+  }
+}
