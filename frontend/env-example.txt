@@ -1,0 +1,4 @@
+# Frontend Environment Variables for Vercel
+# Add this in Vercel dashboard under Environment Variables
+
+VITE_API_URL=https://your-backend-url.up.railway.app/api
