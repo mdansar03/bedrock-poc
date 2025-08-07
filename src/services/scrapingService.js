@@ -5,6 +5,7 @@ const { generateHash, generateChunkId } = require('../utils/hash');
 const logger = require('../utils/logger');
 const knowledgeBaseSync = require('./knowledgeBaseSync');
 const AdvancedWebsiteCrawler = require('./advancedWebsiteCrawler');
+const StealthScrapingService = require('./stealthScrapingService');
 
 class ScrapingService {
   constructor() {
@@ -18,6 +19,7 @@ class ScrapingService {
     
     this.bucket = process.env.BEDROCK_S3_BUCKET;
     this.browser = null; // Reuse browser instance
+    this.stealthService = new StealthScrapingService(); // Anti-detection service
   }
 
   /**
@@ -43,13 +45,18 @@ class ScrapingService {
   }
 
   /**
-   * Clean up browser instance
+   * Clean up browser instance and stealth service
    */
   async closeBrowser() {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
       logger.info('Browser instance closed');
+    }
+    
+    // Clean up stealth service
+    if (this.stealthService) {
+      await this.stealthService.cleanup();
     }
   }
 
@@ -337,67 +344,137 @@ class ScrapingService {
   }
 
   /**
-   * Scrape a single website page
+   * 🥷 STEALTH SCRAPE - Anti-detection scraping for blocked websites
+   * Use this method when regular scraping fails due to bot detection
    */
-  async scrapeSinglePage(url, options = {}) {
+  async stealthScrapePage(url, options = {}) {
     try {
-      const cleanUrl = this.sanitizeUrl(url);
-      logger.info(`Scraping single page: ${cleanUrl}`);
-
-      const browser = await this.initializeBrowser();
-      const page = await browser.newPage();
-      
-      // Configure page
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-      await page.setViewport({ width: 1920, height: 1080 });
-      
-      // Navigate and wait for content
-      await page.goto(cleanUrl, { 
-        waitUntil: ['domcontentloaded', 'networkidle2'], 
-        timeout: 60000 
-      });
-      
-      // Wait for dynamic content
-      await page.waitForTimeout(3000);
-      
-      // Scroll to load lazy content
-      await this.performScrolling(page);
-      
-      // Handle popups
-      await this.handleCommonPopups(page);
-      
-      // Extract content
-      const html = await page.content();
-      const title = await page.title();
-      
-      await page.close();
-      
-      // Process content
-      const processedContent = this.extractContent(html, cleanUrl);
-      
-      const result = {
-        url: cleanUrl,
-        title,
-        timestamp: new Date().toISOString(),
-        content: processedContent,
-        metadata: {
-          scrapedAt: new Date().toISOString(),
-          totalChunks: processedContent.chunks.length,
-          contentHash: generateHash(processedContent.fullText),
-          wordCount: processedContent.wordCount
-        }
-      };
-
-      // Store in S3
-      await this.storePageContent(result);
-      
-      logger.info(`Successfully scraped: ${cleanUrl} (${processedContent.chunks.length} chunks)`);
+      logger.info(`🥷 Using STEALTH mode for: ${url}`);
+      const result = await this.stealthService.scrapePage(url, options);
       return result;
-
     } catch (error) {
-      logger.error(`Error scraping page ${url}:`, error);
+      logger.error(`❌ Stealth scraping failed for ${url}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Scrape a single website page (with auto-fallback to stealth mode)
+   */
+  async scrapeSinglePage(url, options = {}) {
+    const cleanUrl = this.sanitizeUrl(url);
+    let useStealthFallback = options.forceStealthMode || false;
+    
+    // First attempt with regular scraping
+    if (!useStealthFallback) {
+      try {
+        logger.info(`📄 Regular scraping: ${cleanUrl}`);
+
+        const browser = await this.initializeBrowser();
+        const page = await browser.newPage();
+        
+        // Configure page with better headers
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        await page.setViewport({ width: 1920, height: 1080 });
+        
+        // Set realistic headers
+        await page.setExtraHTTPHeaders({
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate',
+          'DNT': '1',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+        });
+        
+        // Navigate and wait for content
+        await page.goto(cleanUrl, { 
+          waitUntil: ['domcontentloaded', 'networkidle2'], 
+          timeout: 60000 
+        });
+        
+        // Wait for dynamic content
+        await page.waitForTimeout(3000);
+        
+        // Check for blocking immediately
+        const html = await page.content();
+        const isBlocked = this.detectBlocking(html);
+        
+        if (isBlocked) {
+          logger.warn(`🚫 Blocking detected, switching to STEALTH mode`);
+          await page.close();
+          useStealthFallback = true;
+        } else {
+          // Continue with regular scraping
+          await this.performScrolling(page);
+          await this.handleCommonPopups(page);
+          
+          const title = await page.title();
+          await page.close();
+          
+          // Process content
+          const processedContent = this.extractContent(html, cleanUrl);
+          
+          const result = {
+            url: cleanUrl,
+            title,
+            timestamp: new Date().toISOString(),
+            content: processedContent,
+            metadata: {
+              scrapedAt: new Date().toISOString(),
+              totalChunks: processedContent.chunks.length,
+              contentHash: generateHash(processedContent.fullText),
+              wordCount: processedContent.wordCount,
+              scrapingMethod: 'regular'
+            }
+          };
+
+          // Store in S3
+          await this.storePageContent(result);
+          
+          logger.info(`✅ Regular scraping successful: ${cleanUrl} (${processedContent.chunks.length} chunks)`);
+          return result;
+        }
+
+      } catch (error) {
+        logger.warn(`⚠️ Regular scraping failed: ${error.message}`);
+        logger.info(`🔄 Falling back to STEALTH mode...`);
+        useStealthFallback = true;
+      }
+    }
+    
+    // Fallback to stealth mode
+    if (useStealthFallback) {
+      try {
+        const result = await this.stealthScrapePage(cleanUrl, options);
+        result.metadata.scrapingMethod = 'stealth';
+        return result;
+      } catch (error) {
+        logger.error(`❌ Both regular and stealth scraping failed for ${url}:`, error);
+        throw new Error(`Failed to scrape ${url} with both regular and stealth methods: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * Detect if page content indicates blocking
+   */
+  detectBlocking(html) {
+    const blockingPhrases = [
+      'request not permitted',
+      'access denied',
+      'blocked',
+      'captcha',
+      'robot',
+      'bot detected',
+      'verification required',
+      'unusual traffic',
+      'security check',
+      'cloudflare'
+    ];
+    
+    const lowerHtml = html.toLowerCase();
+    return blockingPhrases.some(phrase => lowerHtml.includes(phrase));
   }
 
   /**
