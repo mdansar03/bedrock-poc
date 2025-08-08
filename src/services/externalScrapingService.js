@@ -190,10 +190,10 @@ class ExternalScrapingService {
       // Use enhanced crawl for comprehensive discovery
       const requestPayload = {
         url: cleanUrl,
-        maxDepth: options.maxDepth || 3
+        maxDepth: options.maxDepth || 10
       };
 
-      const response = await this.api.post('/enhanced-crawl', requestPayload);
+      const response = await this.api.post('/crawl', requestPayload);
       
       if (!response.data.success) {
         throw new Error('External crawling service returned unsuccessful response');
