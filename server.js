@@ -26,9 +26,28 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// CORS configuration
+// CORS configuration (supports multiple origins via CORS_ORIGINS or FRONTEND_URL)
+const configuredOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow non-browser or same-origin requests (no Origin header)
+    if (!origin) return callback(null, true);
+
+    // Exact match against configured origins
+    if (configuredOrigins.includes(origin)) return callback(null, true);
+
+    // Optional: allow all Vercel preview domains when enabled
+    const allowVercelWildcard = process.env.CORS_ALLOW_VERCEL_WILDCARD === 'true';
+    if (allowVercelWildcard && /https?:\/\/.*\.vercel\.app$/.test(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
+  },
   credentials: true
 }));
 
