@@ -1,7 +1,7 @@
 {
   "name": "oralia-ai-chatbot",
   "version": "1.0.0",
-  "description": "Website scraping and Bedrock-powered chatbot application",
+  "description": "External scraping service integration with AWS Bedrock-powered chatbot application",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,7 +9,7 @@
     "dev:frontend": "cd frontend && npm run dev",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:frontend\"",
     "install:all": "npm install && cd frontend && npm install",
-    "build": "echo 'Backend build complete'",
+    "build": "esbuild server.js --bundle --platform=node --outfile=dist/server.js",
     "heroku-postbuild": "cd frontend && npm install && npm run build"
   },
   "keywords": [
@@ -29,7 +29,6 @@
     "@aws-sdk/client-s3": "^3.478.0",
     "aws-sdk": "^2.1491.0",
     "axios": "^1.11.0",
-    "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "dotenv": "^16.3.1",
@@ -38,15 +37,12 @@
     "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
     "multer": "^1.4.5-lts.1",
-    "puppeteer": "^21.6.1",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "uuid": "^9.0.1",
-    "winston": "^3.11.0",
-    "xml2js": "^0.6.2"
+    "winston": "^3.11.0"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
+    "esbuild": "^0.25.8",
     "nodemon": "^3.0.2"
   }
 }

@@ -99,6 +99,7 @@ class BedrockService {
       logger.info(`Using Model: ${selectedModelId}`);
       logger.info(`AWS Region: ${process.env.AWS_REGION}`);
 
+      
       // Validate required configuration
       if (!this.knowledgeBaseId) {
         throw new Error('BEDROCK_KNOWLEDGE_BASE_ID is not configured');
@@ -116,7 +117,7 @@ class BedrockService {
             modelArn: `arn:aws:bedrock:${process.env.AWS_REGION}::foundation-model/${selectedModelId}`,
             retrievalConfiguration: {
               vectorSearchConfiguration: {
-                numberOfResults: 5,
+                numberOfResults: 10,
               },
             },
           },

@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const scrapingService = require('../services/scrapingService');
+const externalScrapingService = require('../services/externalScrapingService');
 const knowledgeBaseSync = require('../services/knowledgeBaseSync');
 const logger = require('../utils/logger');
 
@@ -44,8 +44,8 @@ router.post('/scrape', [
 
     logger.info(`Received scraping request for: ${url}`);
 
-    // Start scraping
-    const result = await scrapingService.scrapeWebsite(url, options);
+    // Start scraping via external service
+    const result = await externalScrapingService.scrapeWebsite(url, options);
 
     res.json({
       success: true,
@@ -78,7 +78,7 @@ router.get('/status/:domain?', async (req, res) => {
     const { domain } = req.params;
 
     if (domain) {
-      const history = await scrapingService.getScrapingHistory(domain);
+      const history = await externalScrapingService.getScrapingHistory(domain);
       res.json({
         success: true,
         domain,
@@ -103,21 +103,86 @@ router.get('/status/:domain?', async (req, res) => {
 });
 
 /**
- * Get available scraping options
+ * Check external scraping service health
+ * GET /api/scraping/health
+ */
+router.get('/health', async (req, res) => {
+  try {
+    const isAvailable = await externalScrapingService.isExternalServiceAvailable();
+    const externalHealth = await externalScrapingService.getExternalServiceHealth();
+    
+    res.json({
+      success: true,
+      externalService: {
+        available: isAvailable,
+        health: externalHealth,
+        endpoint: process.env.EXTERNAL_SCRAPER_URL || 'https://scrapper.apps.kaaylabs.com/api',
+        lastChecked: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    logger.error('Error checking external service health:', error);
+    res.status(503).json({
+      success: false,
+      error: 'External scraping service health check failed',
+      message: error.message,
+      externalService: {
+        available: false,
+        health: { status: 'unhealthy' },
+        endpoint: process.env.EXTERNAL_SCRAPER_URL || 'https://scrapper.apps.kaaylabs.com/api',
+        lastChecked: new Date().toISOString()
+      }
+    });
+  }
+});
+
+/**
+ * Get available scraping options and external service info
  * GET /api/scraping/options
  */
-router.get('/options', (req, res) => {
-  res.json({
-    success: true,
-    options: {
-      maxTimeout: 30000,
-      waitForNetworkIdle: true,
-      extractImages: false,
-      extractLinks: false,
-      chunkSize: 500,
-      supportedFormats: ['html', 'text']
-    }
-  });
+router.get('/options', async (req, res) => {
+  try {
+    // Get external service presets
+    const externalPresets = await externalScrapingService.getExternalServicePresets();
+    const externalHealth = await externalScrapingService.getExternalServiceHealth();
+    
+    res.json({
+      success: true,
+      options: {
+        maxPages: 10000,
+        delay: 2000,
+        batchSize: 3,
+        followExternalLinks: false,
+        deepExtraction: true,
+        chunkSize: 1000,
+        supportedFormats: ['html', 'text', 'json']
+      },
+      externalService: {
+        health: externalHealth,
+        presets: externalPresets,
+        endpoint: process.env.EXTERNAL_SCRAPER_URL || 'https://scrapper.apps.kaaylabs.com/api'
+      }
+    });
+  } catch (error) {
+    logger.error('Error getting scraping options:', error);
+    res.json({
+      success: true,
+      options: {
+        maxPages: 10000,
+        delay: 2000,
+        batchSize: 3,
+        followExternalLinks: false,
+        deepExtraction: true,
+        chunkSize: 1000,
+        supportedFormats: ['html', 'text', 'json']
+      },
+      externalService: {
+        health: { status: 'unknown' },
+        presets: null,
+        endpoint: process.env.EXTERNAL_SCRAPER_URL || 'https://scrapper.apps.kaaylabs.com/api'
+      }
+    });
+  }
 });
 
 /**
@@ -158,8 +223,8 @@ router.post('/discover', [
 
     logger.info(`Received page discovery request for: ${url}`);
 
-    // Start page discovery
-    const result = await scrapingService.discoverWebsitePages(url, options);
+    // Start page discovery via external service
+    const result = await externalScrapingService.discoverWebsitePages(url, options);
 
     res.json({
       success: true,
@@ -255,8 +320,8 @@ router.post('/crawl', [
       ...options
     };
 
-    // Start comprehensive crawling and scraping
-    const result = await scrapingService.crawlAndScrapeWebsite(url, crawlOptions);
+    // Start comprehensive crawling and scraping via external service
+    const result = await externalScrapingService.crawlAndScrapeWebsite(url, crawlOptions);
 
     res.json({
       success: true,
@@ -352,7 +417,11 @@ router.post('/sync', [
   body('domain')
     .isString()
     .withMessage('Domain is required')
-    .trim()
+    .trim(),
+  body('waitForAvailability')
+    .optional()
+    .isBoolean()
+    .withMessage('waitForAvailability must be a boolean')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -363,30 +432,42 @@ router.post('/sync', [
       });
     }
 
-    const { domain } = req.body;
+    const { domain, waitForAvailability = true } = req.body;
     
-    logger.info(`Manual knowledge base sync requested for: ${domain}`);
+    logger.info(`Manual knowledge base sync requested for: ${domain} (waitForAvailability: ${waitForAvailability})`);
     
-    const result = await knowledgeBaseSync.fullSync(domain, false);
+    const result = await knowledgeBaseSync.fullSync(domain, false, waitForAvailability);
     
     res.json({
       success: true,
-      message: 'Knowledge base sync initiated',
+      message: 'Knowledge base sync initiated successfully',
       data: {
         jobId: result.jobId,
         status: result.status,
         startedAt: result.startedAt,
-        domain
+        domain,
+        waitedForAvailability: waitForAvailability
       }
     });
     
   } catch (error) {
     logger.error('Error initiating manual sync:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to initiate sync',
-      message: error.message
-    });
+    
+    // Provide specific error handling for common issues
+    if (error.message.includes('already in use') || error.message.includes('ongoing ingestion job')) {
+      res.status(409).json({
+        success: false,
+        error: 'Knowledge base busy',
+        message: 'Knowledge base is currently processing data. Please wait for the current job to complete and try again.',
+        suggestion: 'You can check the status of ongoing jobs using GET /api/scraping/sync/status/{jobId}'
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to initiate sync',
+        message: error.message
+      });
+    }
   }
 });
 

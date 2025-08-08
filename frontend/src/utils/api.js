@@ -59,6 +59,11 @@ export const scrapingAPI = {
   getOptions: async () => {
     const response = await api.get('/scraping/options');
     return response.data;
+  },
+
+  checkHealth: async () => {
+    const response = await api.get('/scraping/health');
+    return response.data;
   }
 };
 

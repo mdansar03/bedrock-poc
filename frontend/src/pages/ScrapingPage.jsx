@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { Globe, CheckCircle, AlertCircle, Clock, ExternalLink } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Globe, CheckCircle, AlertCircle, Clock, ExternalLink, Wifi, WifiOff } from 'lucide-react'
 import { scrapingAPI } from '../utils/api'
 
 const ScrapingPage = () => {
@@ -7,6 +7,7 @@ const ScrapingPage = () => {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [serviceHealth, setServiceHealth] = useState({ available: true, checking: true })
   const [scrapingMode, setScrapingMode] = useState('single') // 'single' or 'crawl'
   const [crawlOptions, setCrawlOptions] = useState({
     maxPages: 1000, // Much higher default for comprehensive scraping
@@ -15,6 +16,32 @@ const ScrapingPage = () => {
     batchSize: 3, // New: concurrent processing control
     deepExtraction: true // New: enable deep DOM extraction with scrolling
   })
+
+  // Check service health on component mount
+  useEffect(() => {
+    checkServiceHealth()
+    // Check health every 30 seconds
+    const interval = setInterval(checkServiceHealth, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const checkServiceHealth = async () => {
+    try {
+      const healthData = await scrapingAPI.checkHealth()
+      setServiceHealth({
+        available: healthData.externalService?.available || false,
+        checking: false,
+        health: healthData.externalService?.health,
+        lastChecked: healthData.externalService?.lastChecked
+      })
+    } catch (error) {
+      setServiceHealth({
+        available: false,
+        checking: false,
+        error: error.message
+      })
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -64,6 +91,8 @@ const ScrapingPage = () => {
       cleanUrl = 'https://' + cleanUrl
     }
     
+
+    
     return cleanUrl
   }
 
@@ -83,13 +112,53 @@ const ScrapingPage = () => {
     <div className="max-w-4xl mx-auto">
       {/* Header */}
       <div className="mb-8">
-        <div className="flex items-center mb-4">
-          <Globe className="w-8 h-8 text-blue-600 mr-3" />
-          <h1 className="text-3xl font-bold text-gray-900">Website Scraping</h1>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <Globe className="w-8 h-8 text-blue-600 mr-3" />
+            <h1 className="text-3xl font-bold text-gray-900">Website Scraping</h1>
+          </div>
+          
+          {/* Service Status Indicator */}
+          <div className="flex items-center space-x-2">
+            {serviceHealth.checking ? (
+              <div className="flex items-center text-gray-500">
+                <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin mr-2"></div>
+                <span className="text-sm">Checking service...</span>
+              </div>
+            ) : serviceHealth.available ? (
+              <div className="flex items-center text-green-600">
+                <Wifi className="w-4 h-4 mr-2" />
+                <span className="text-sm font-medium">Service Online</span>
+              </div>
+            ) : (
+              <div className="flex items-center text-red-600">
+                <WifiOff className="w-4 h-4 mr-2" />
+                <span className="text-sm font-medium">Service Offline</span>
+              </div>
+            )}
+          </div>
         </div>
         <p className="text-gray-600">
           Enter a website URL to scrape and extract content for your knowledge base.
         </p>
+        
+        {/* Service Status Alert */}
+        {!serviceHealth.checking && !serviceHealth.available && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start">
+              <AlertCircle className="w-5 h-5 text-red-500 mr-2 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm text-red-800 font-medium">External Scraping Service Unavailable</p>
+                <p className="text-sm text-red-700 mt-1">
+                  The external scraping service is currently offline. Please try again later or contact support if the issue persists.
+                </p>
+                {serviceHealth.error && (
+                  <p className="text-xs text-red-600 mt-1">Error: {serviceHealth.error}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Scraping Form */}
@@ -267,9 +336,10 @@ const ScrapingPage = () => {
               
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                 <p className="text-sm text-blue-800">
-                  <strong>Enhanced Scraping:</strong> Automatically discovers ALL pages through sitemaps and internal links (up to 10,000). 
-                  Deep DOM extraction with scrolling simulation, dynamic content loading, popup handling, and batch processing with retry logic. 
-                  Perfect for complex e-commerce sites with hundreds of products, recipes, and detailed content.
+                  <strong>Enhanced External Scraping:</strong> Powered by advanced external scraping service with unlimited crawling capabilities. 
+                  Automatically discovers ALL pages through intelligent sitemap analysis, robots.txt parsing, and comprehensive link crawling. 
+                  Features professional-grade anti-detection, dynamic content handling, and optimized batch processing. 
+                  Perfect for any website size - from simple blogs to complex e-commerce sites with thousands of pages.
                 </p>
               </div>
             </div>
@@ -297,8 +367,8 @@ const ScrapingPage = () => {
               />
               <button
                 type="submit"
-                disabled={loading || !url || !isValidUrl(url)}
-                className="btn-primary flex items-center space-x-2"
+                disabled={loading || !url || !isValidUrl(url) || !serviceHealth.available}
+                className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
                   <>
@@ -495,7 +565,7 @@ const ScrapingPage = () => {
               <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mr-3 mt-0.5 text-xs font-bold">
                 2
               </div>
-              <p>Our system will extract and clean the content from the page</p>
+              <p>Our advanced external scraping service extracts and processes the content with professional-grade capabilities</p>
             </div>
             <div className="flex items-start">
               <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mr-3 mt-0.5 text-xs font-bold">
