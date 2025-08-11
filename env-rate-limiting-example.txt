@@ -1,0 +1,33 @@
+# Rate Limiting Configuration for Bedrock Service
+
+# Maximum number of concurrent requests to Bedrock (default: 2)
+BEDROCK_MAX_CONCURRENT=2
+
+# Minimum interval between requests in milliseconds (default: 1500ms = 1.5 seconds)
+BEDROCK_MIN_INTERVAL=1500
+
+# Maximum number of retries for rate-limited requests (default: 5)
+BEDROCK_MAX_RETRIES=5
+
+# Base delay for exponential backoff in milliseconds (default: 2000ms = 2 seconds)
+BEDROCK_BASE_DELAY=2000
+
+# Maximum delay between retries in milliseconds (default: 30000ms = 30 seconds)
+BEDROCK_MAX_DELAY=30000
+
+# Example Configuration for Different Usage Patterns:
+
+# Conservative (for shared/low-limit accounts):
+# BEDROCK_MAX_CONCURRENT=1
+# BEDROCK_MIN_INTERVAL=2000
+# BEDROCK_MAX_RETRIES=7
+
+# Aggressive (for dedicated/high-limit accounts):
+# BEDROCK_MAX_CONCURRENT=3
+# BEDROCK_MIN_INTERVAL=1000
+# BEDROCK_MAX_RETRIES=3
+
+# Production (balanced for stability):
+# BEDROCK_MAX_CONCURRENT=2
+# BEDROCK_MIN_INTERVAL=1500
+# BEDROCK_MAX_RETRIES=5

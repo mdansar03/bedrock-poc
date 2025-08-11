@@ -7,6 +7,8 @@ const ScrapingPage = () => {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [jobStatus, setJobStatus] = useState(null) // For async crawl progress
+  const [currentJobId, setCurrentJobId] = useState(null)
   const [serviceHealth, setServiceHealth] = useState({ available: true, checking: true })
   const [scrapingMode, setScrapingMode] = useState('single') // 'single' or 'crawl'
   const [crawlOptions, setCrawlOptions] = useState({
@@ -54,26 +56,49 @@ const ScrapingPage = () => {
     setLoading(true)
     setError(null)
     setResult(null)
+    setJobStatus(null)
+    setCurrentJobId(null)
 
     try {
       // Sanitize URL before sending
       const cleanUrl = sanitizeUrl(url)
       
-      let response;
       if (scrapingMode === 'crawl') {
-        // For crawl mode, the backend will automatically discover all pages
-        // and scrape them without needing a separate discovery step
-        response = await scrapingAPI.crawlWebsite(cleanUrl, crawlOptions)
+        // Use async crawl for long-running operations
+        const startResponse = await scrapingAPI.startAsyncCrawl(cleanUrl, crawlOptions)
+        const jobId = startResponse.data.jobId
+        
+        setCurrentJobId(jobId)
+        setJobStatus({
+          status: 'pending',
+          message: 'Starting crawl job...',
+          percentage: 0
+        })
+
+        // Poll for completion
+        const result = await scrapingAPI.pollCrawlCompletion(jobId, (progressData) => {
+          setJobStatus({
+            status: progressData.status,
+            message: progressData.progress?.message || `Status: ${progressData.status}`,
+            percentage: progressData.progress?.percentage || 0,
+            phase: progressData.progress?.phase
+          })
+        })
+        
+        setResult(result.data)
       } else {
-        response = await scrapingAPI.scrapeWebsite(cleanUrl)
+        // Single page scraping (still synchronous)
+        const response = await scrapingAPI.scrapeWebsite(cleanUrl)
+        setResult(response.data)
       }
       
-      setResult(response.data)
     } catch (error) {
       console.error('Scraping error:', error)
       setError(error.response?.data?.message || error.message || 'Failed to scrape website')
     } finally {
       setLoading(false)
+      setJobStatus(null)
+      setCurrentJobId(null)
     }
   }
 
@@ -391,18 +416,42 @@ const ScrapingPage = () => {
         </form>
       </div>
 
-      {/* Loading State */}
+      {/* Loading State with Progress */}
       {loading && (
         <div className="card">
           <div className="flex items-center justify-center py-8">
-            <div className="text-center">
+            <div className="text-center w-full max-w-md">
               <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">
                 {scrapingMode === 'crawl' ? 'Crawling Website' : 'Scraping Website'}
               </h3>
+              
+              {/* Job Progress Information */}
+              {jobStatus && scrapingMode === 'crawl' && (
+                <div className="space-y-3 mb-4">
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${jobStatus.percentage}%` }}
+                    ></div>
+                  </div>
+                  <div className="text-sm space-y-1">
+                    <p className="font-medium text-gray-900">{jobStatus.message}</p>
+                    {jobStatus.phase && (
+                      <p className="text-gray-600 capitalize">Phase: {jobStatus.phase}</p>
+                    )}
+                    {currentJobId && (
+                      <p className="text-xs text-gray-500">Job ID: {currentJobId}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              
               <p className="text-gray-600">
                 {scrapingMode === 'crawl' 
-                  ? 'This may take several minutes while we discover and scrape all pages...'
+                  ? jobStatus 
+                    ? 'Your crawl is running in the background. You can close this page and return later.'
+                    : 'Starting crawl job... This may take several minutes while we discover and scrape all pages.'
                   : 'This may take a few moments while we extract and process the content...'
                 }
               </p>
@@ -498,13 +547,57 @@ const ScrapingPage = () => {
             </div>
           </div>
 
+          {/* Content Preview Card */}
+          {(result.content?.preview || result.contentPreview) && (
+            <div className="card">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Content Preview</h3>
+              
+              {/* For single page scraping */}
+              {result.content?.preview && (
+                <div className="space-y-3">
+                  <div className="bg-gray-50 border rounded-lg p-4">
+                    <div className="text-sm text-gray-600 mb-2">Extracted Content (first 500 characters):</div>
+                    <p className="text-gray-800 text-sm leading-relaxed">{result.content.preview}</p>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Total chunks extracted: {result.content.totalChunks || result.chunksExtracted}
+                  </div>
+                </div>
+              )}
+              
+              {/* For crawling with multiple pages */}
+              {result.contentPreview && result.contentPreview.length > 0 && (
+                <div className="space-y-4">
+                  <div className="text-sm text-gray-600 mb-3">
+                    Sample content from the first {result.contentPreview.length} pages:
+                  </div>
+                  {result.contentPreview.map((page, index) => (
+                    <div key={index} className="bg-gray-50 border rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-medium text-gray-900 truncate">{page.title || 'Untitled'}</h4>
+                        <span className="text-xs text-gray-500">{page.chunksCount} chunks</span>
+                      </div>
+                      <p className="text-xs text-blue-600 mb-2 truncate">{page.url}</p>
+                      <p className="text-gray-700 text-sm leading-relaxed">{page.preview}</p>
+                    </div>
+                  ))}
+                  <div className="text-xs text-gray-500">
+                    Total pages with content: {result.contentPreview.length} / {result.totalPagesScraped}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Details Card */}
           <div className="card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Scraping Details</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Page Title</label>
-                <p className="text-gray-900">{result.title}</p>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {result.domain ? 'Domain' : 'Page Title'}
+                </label>
+                <p className="text-gray-900">{result.domain || result.title}</p>
               </div>
               
               <div>
@@ -522,15 +615,36 @@ const ScrapingPage = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Content Hash</label>
-                <p className="text-gray-600 font-mono text-sm">{result.metadata?.contentHash}</p>
-              </div>
+              {result.metadata?.contentHash && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Content Hash</label>
+                  <p className="text-gray-600 font-mono text-sm">{result.metadata.contentHash}</p>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Scraped At</label>
                 <p className="text-gray-600">{new Date(result.timestamp).toLocaleString()}</p>
               </div>
+              
+              {/* Show errors if any */}
+              {result.errors && result.errors.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-red-700 mb-1">
+                    Errors ({result.errors.length})
+                  </label>
+                  <div className="space-y-1">
+                    {result.errors.slice(0, 3).map((error, index) => (
+                      <p key={index} className="text-red-600 text-xs">
+                        {error.url}: {error.error}
+                      </p>
+                    ))}
+                    {result.errors.length > 3 && (
+                      <p className="text-red-500 text-xs">... and {result.errors.length - 3} more errors</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

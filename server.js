@@ -75,12 +75,17 @@ app.use('*', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`🚀 Oralia AI Chatbot server running on port ${PORT}`);
   logger.info(`📱 Frontend URL: ${process.env.FRONTEND_URL}`);
   logger.info(`🌍 Environment: ${process.env.NODE_ENV}`);
   logger.info(`🔧 AWS Region: ${process.env.AWS_REGION}`);
   logger.info(`📚 Knowledge Base ID: ${process.env.BEDROCK_KNOWLEDGE_BASE_ID}`);
 });
+
+// Increase server request timeout to tolerate long-running crawls
+const SERVER_REQUEST_TIMEOUT_MS = parseInt(process.env.SERVER_REQUEST_TIMEOUT_MS || '', 10) || 1200000; // 20 minutes
+server.setTimeout(SERVER_REQUEST_TIMEOUT_MS);
+logger.info(`⏱️ HTTP request timeout set to ${SERVER_REQUEST_TIMEOUT_MS}ms`);
 
 module.exports = app;

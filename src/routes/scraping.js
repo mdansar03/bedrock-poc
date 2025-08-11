@@ -1,7 +1,9 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const externalScrapingService = require('../services/externalScrapingService');
+
 const knowledgeBaseSync = require('../services/knowledgeBaseSync');
+const jobRegistry = require('../services/jobRegistry');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -55,7 +57,14 @@ router.post('/scrape', [
         title: result.title,
         timestamp: result.timestamp,
         metadata: result.metadata,
-        chunksExtracted: result.content.chunks.length
+        chunksExtracted: result.content.chunks.length,
+        content: {
+          preview: result.content.chunks.length > 0 ? 
+            result.content.chunks[0].content.substring(0, 500) + '...' : 
+            'No content extracted',
+          totalChunks: result.content.chunks.length,
+          chunks: result.content.chunks
+        }
       }
     });
 
@@ -229,18 +238,18 @@ router.post('/discover', [
     res.json({
       success: true,
       message: 'Page discovery completed successfully',
-      data: {
-        domain: result.domain,
-        totalPages: result.totalPages,
-        sitemapPages: result.sitemapPages,
-        crawledPages: result.crawledPages,
-        discoveredUrls: result.discoveredUrls.slice(0, 10), // Show first 10 URLs as sample
-        recommendation: {
-          suggestedMaxPages: result.totalPages,
-          estimatedTime: Math.ceil(result.totalPages * 2), // Rough estimate: 2 seconds per page
-          message: `Found ${result.totalPages} pages. Consider setting maxPages if you want to limit scraping.`
+              data: {
+          domain: result.domain,
+          totalPages: result.totalPages,
+          sitemapPages: result.sitemapPages,
+          crawledPages: result.crawledPages,
+          discoveredUrls: result.discoveredUrls.slice(0, 10), // Show first 10 URLs as sample
+          recommendation: {
+            suggestedMaxPages: result.totalPages,
+            estimatedTime: Math.ceil(result.totalPages * 2), // Rough estimate: 2 seconds per page
+            message: `Found ${result.totalPages} pages. Consider setting maxPages if you want to limit scraping.`
+          }
         }
-      }
     });
 
   } catch (error) {
@@ -257,7 +266,7 @@ router.post('/discover', [
  * Crawl and scrape entire website
  * POST /api/scraping/crawl
  */
-router.post('/crawl', [
+router.post('/enhanced-crawl', [
   body('url')
     .isURL()
     .withMessage('Must be a valid URL')
@@ -320,8 +329,24 @@ router.post('/crawl', [
       ...options
     };
 
+
+    console.log(crawlOptions, "crawlOptions --->");
+
     // Start comprehensive crawling and scraping via external service
     const result = await externalScrapingService.crawlAndScrapeWebsite(url, crawlOptions);
+
+    console.log(result, "result --->");
+
+    // Calculate content preview from scraped pages
+    const contentPreview = result.scrapedPages
+      .filter(page => page.content?.chunks?.length > 0)
+      .slice(0, 3) // First 3 pages with content
+      .map(page => ({
+        url: page.url,
+        title: page.title,
+        chunksCount: page.content.chunks.length,
+        preview: page.content.chunks[0]?.content?.substring(0, 200) + '...' || 'No content'
+      }));
 
     res.json({
       success: true,
@@ -336,12 +361,22 @@ router.post('/crawl', [
         totalChunks: result.contentStats.totalChunks,
         successRate: result.crawlingStats.successRate,
         errors: result.errors.length > 0 ? result.errors.slice(0, 5) : [], // Show first 5 errors
+        contentPreview,
         summary: {
           pagesDiscovered: result.discoveryStats?.totalPagesDiscovered || result.crawlingStats.totalPagesDiscovered,
           pagesScraped: result.scrapedPages.length,
           limitApplied: result.discoveryStats?.limitApplied || false,
           efficiency: `${result.crawlingStats.successRate} success rate`
-        }
+        },
+        // Include all scraped data for debugging (can be removed in production)
+        scrapedPages: result.scrapedPages.map(page => ({
+          url: page.url,
+          title: page.title,
+          timestamp: page.timestamp,
+          metadata: page.metadata,
+          contentChunks: page.content?.chunks?.length || 0,
+          contentPreview: page.content?.chunks?.[0]?.content?.substring(0, 300) || 'No content'
+        }))
       }
     });
 
@@ -356,21 +391,168 @@ router.post('/crawl', [
 });
 
 /**
- * Get crawling progress (for future implementation)
- * GET /api/scraping/crawl/progress/:jobId
+ * Start async crawl job (returns immediately with jobId)
+ * POST /api/scraping/crawl-async
  */
-router.get('/crawl/progress/:jobId', (req, res) => {
+router.post('/crawl-async', [
+  body('url')
+    .isURL()
+    .withMessage('Must be a valid URL')
+    .customSanitizer(value => {
+      let cleanUrl = value.trim().replace(/^[@#]+/, '');
+      if (!cleanUrl.match(/^https?:\/\//)) {
+        cleanUrl = 'https://' + cleanUrl;
+      }
+      return cleanUrl;
+    }),
+  body('options')
+    .optional()
+    .isObject()
+    .withMessage('Options must be an object'),
+  body('options.maxPages')
+    .optional()
+    .isInt({ min: 1, max: 10000 })
+    .withMessage('Max pages must be between 1 and 10,000'),
+  body('options.delay')
+    .optional()
+    .isInt({ min: 0, max: 10000 })
+    .withMessage('Delay must be between 0 and 10000ms'),
+  body('options.followExternalLinks')
+    .optional()
+    .isBoolean()
+    .withMessage('Follow external links must be boolean'),
+  body('options.batchSize')
+    .optional()
+    .isInt({ min: 1, max: 10 })
+    .withMessage('Batch size must be between 1 and 10'),
+  body('options.deepExtraction')
+    .optional()
+    .isBoolean()
+    .withMessage('Deep extraction must be a boolean'),
+], async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { url, options = {} } = req.body;
+
+    // Set default crawling options
+    const crawlOptions = {
+      maxPages: options.maxPages || 50,
+      delay: options.delay || 1000,
+      followExternalLinks: options.followExternalLinks || false,
+      respectRobots: options.respectRobots !== false,
+      ...options
+    };
+
+    // Create job and return immediately
+    const jobId = jobRegistry.createJob('crawl', { url, options: crawlOptions });
+
+    logger.info(`Started async crawl job ${jobId} for: ${url}`);
+
+    // Start crawling in background (don't await)
+    setImmediate(async () => {
+      try {
+        jobRegistry.updateJob(jobId, {
+          status: 'running',
+          progress: {
+            phase: 'discovery',
+            message: 'Discovering pages...',
+            percentage: 10
+          }
+        });
+
+        const result = await externalScrapingService.crawlAndScrapeWebsite(url, crawlOptions, (progress) => {
+          // Update job progress in real-time
+          jobRegistry.updateJob(jobId, {
+            progress: {
+              phase: progress.phase,
+              message: progress.message,
+              percentage: progress.percentage
+            }
+          });
+        });
+        
+        jobRegistry.completeJob(jobId, {
+          domain: result.domain,
+          timestamp: result.timestamp,
+          crawlingStats: result.crawlingStats,
+          contentStats: result.contentStats,
+          discoveryStats: result.discoveryStats,
+          totalPagesScraped: result.scrapedPages.length,
+          totalChunks: result.contentStats.totalChunks,
+          successRate: result.crawlingStats.successRate,
+          errors: result.errors.length > 0 ? result.errors.slice(0, 5) : [],
+          summary: {
+            pagesDiscovered: result.discoveryStats?.totalPagesDiscovered || result.crawlingStats.totalPagesDiscovered,
+            pagesScraped: result.scrapedPages.length,
+            limitApplied: result.discoveryStats?.limitApplied || false,
+            efficiency: `${result.crawlingStats.successRate} success rate`
+          }
+        });
+
+        logger.info(`Async crawl job ${jobId} completed successfully`);
+
+      } catch (error) {
+        logger.error(`Async crawl job ${jobId} failed:`, error);
+        jobRegistry.failJob(jobId, error);
+      }
+    });
+
+    // Return job ID immediately
+    res.json({
+      success: true,
+      message: 'Crawl job started',
+      data: {
+        jobId,
+        status: 'pending',
+        estimatedTime: '2-5 minutes',
+        progressUrl: `/api/scraping/crawl/status/${jobId}`
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error starting async crawl:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to start crawl job',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get crawl job status and progress
+ * GET /api/scraping/crawl/status/:jobId
+ */
+router.get('/crawl/status/:jobId', (req, res) => {
   const { jobId } = req.params;
   
-  // This would implement real-time progress tracking
-  // For now, return a placeholder
+  const job = jobRegistry.getJob(jobId);
+  if (!job) {
+    return res.status(404).json({
+      success: false,
+      error: 'Job not found',
+      message: `No crawl job found with ID: ${jobId}`
+    });
+  }
+
   res.json({
     success: true,
     data: {
-      jobId,
-      status: 'completed',
-      progress: 100,
-      message: 'Crawling completed'
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      result: job.result || null,
+      error: job.error || null
     }
   });
 });

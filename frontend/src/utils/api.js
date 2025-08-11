@@ -1,11 +1,13 @@
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
+// Allow long-running requests from the browser (default 20 minutes)
+const API_TIMEOUT = parseInt(import.meta.env.VITE_API_TIMEOUT_MS || '1200000', 10);
 
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: API_TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -45,9 +47,62 @@ export const scrapingAPI = {
     return response.data;
   },
   
-  getCrawlProgress: async (jobId) => {
-    const response = await api.get(`/scraping/crawl/progress/${jobId}`);
+  // Start async crawl job (returns immediately with jobId)
+  startAsyncCrawl: async (url, options = {}) => {
+    const response = await api.post('/scraping/enhanced-crawl', { url, options });
     return response.data;
+  },
+  
+  // Get crawl job status
+  getCrawlStatus: async (jobId) => {
+    const response = await api.get(`/scraping/crawl/status/${jobId}`);
+    return response.data;
+  },
+  
+  // Legacy endpoint (for backward compatibility)
+  getCrawlProgress: async (jobId) => {
+    const response = await api.get(`/scraping/crawl/status/${jobId}`);
+    return response.data;
+  },
+  
+  // Poll crawl job until completion
+  pollCrawlCompletion: async (jobId, onProgress = null) => {
+    const pollInterval = 5000; // 5 seconds
+    const maxPollTime = 600000; // 10 minutes max
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxPollTime) {
+      try {
+        const response = await scrapingAPI.getCrawlStatus(jobId);
+        const { data } = response;
+        
+        // Call progress callback if provided
+        if (onProgress) {
+          onProgress(data);
+        }
+        
+        // Check if job is completed
+        if (data.status === 'completed') {
+          return { success: true, data: data.result };
+        }
+        
+        // Check if job failed
+        if (data.status === 'failed') {
+          throw new Error(data.error || 'Crawl job failed');
+        }
+        
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        
+      } catch (error) {
+        if (error.response?.status === 404) {
+          throw new Error('Crawl job not found');
+        }
+        throw error;
+      }
+    }
+    
+    throw new Error('Crawl job timed out');
   },
   
   getStatus: async (domain = null) => {

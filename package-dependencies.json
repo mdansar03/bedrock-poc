@@ -1,0 +1,34 @@
+{
+  "required_dependencies": {
+    "core_aws_bedrock": {
+      "@aws-sdk/client-bedrock-runtime": "^3.454.0",
+      "@aws-sdk/client-bedrock-agent": "^3.454.0", 
+      "@aws-sdk/client-bedrock-agent-runtime": "^3.454.0",
+      "@aws-sdk/client-s3": "^3.454.0"
+    },
+    "file_processing": {
+      "multer": "^1.4.5"
+    }
+  },
+  "optional_dependencies": {
+    "pdf_processing": {
+      "pdf-parse": "^1.1.1"
+    },
+    "office_documents": {
+      "mammoth": "^1.6.0"
+    },
+    "excel_files": {
+      "xlsx": "^0.18.5"
+    }
+  },
+  "install_commands": {
+    "basic_migration": "npm install @aws-sdk/client-bedrock-runtime @aws-sdk/client-bedrock-agent @aws-sdk/client-bedrock-agent-runtime @aws-sdk/client-s3 multer",
+    "with_file_processing": "npm install @aws-sdk/client-bedrock-runtime @aws-sdk/client-bedrock-agent @aws-sdk/client-bedrock-agent-runtime @aws-sdk/client-s3 multer pdf-parse mammoth xlsx",
+    "minimal_test": "npm install @aws-sdk/client-bedrock-runtime @aws-sdk/client-bedrock-agent-runtime"
+  },
+  "notes": {
+    "aws_sdk": "Use v3 AWS SDK for better performance and tree-shaking",
+    "file_processing": "PDF, DOCX, and Excel processing are optional - install only what you need",
+    "existing_deps": "Keep your existing dependencies - these are additions only"
+  }
+}

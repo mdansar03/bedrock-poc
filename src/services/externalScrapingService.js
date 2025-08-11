@@ -3,10 +3,13 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { generateHash, generateChunkId } = require('../utils/hash');
 const logger = require('../utils/logger');
 const knowledgeBaseSync = require('./knowledgeBaseSync');
+const cheerio = require('cheerio');
+const TurndownService = require('turndown');
+const { convert } = require('html-to-text');
 
 class ExternalScrapingService {
   constructor() {
-    this.externalApiUrl = process.env.EXTERNAL_SCRAPER_URL || 'https://scrapper.apps.kaaylabs.com/api';
+    this.externalApiUrl = process.env.EXTERNAL_SCRAPER_URL || 'http://localhost:4000/api';
     this.s3Client = new S3Client({
       region: process.env.AWS_REGION || 'us-east-1',
       credentials: {
@@ -19,12 +22,13 @@ class ExternalScrapingService {
     // Create axios instance for external API
     this.api = axios.create({
       baseURL: this.externalApiUrl,
-      timeout: 120000, // 2 minutes timeout for crawling operations
+      // Allow long-running crawl operations (configurable via env)
+      timeout: parseInt(process.env.EXTERNAL_SCRAPER_TIMEOUT_MS || '', 10) || 1200000, // 20 minutes
       headers: {
         'Content-Type': 'application/json',
       },
-      // Add retry configuration
-      retries: 3,
+      // Add retry configuration - increase retries for long crawls
+      retries: 5,
       retryDelay: (retryCount) => retryCount * 2000, // Exponential backoff
     });
 
@@ -50,11 +54,13 @@ class ExternalScrapingService {
         config.__retryCount = config.__retryCount || 0;
         config.__retryCount++;
         
-        // Check if error is retryable (503, 502, 504, network errors)
-        const retryableErrors = [502, 503, 504, 'ECONNRESET', 'ENOTFOUND', 'ECONNABORTED'];
+        // Check if error is retryable (503, 502, 504, network errors, timeouts)
+        const retryableErrors = [502, 503, 504, 'ECONNRESET', 'ENOTFOUND', 'ECONNABORTED', 'ETIMEDOUT'];
         const isRetryable = retryableErrors.includes(error.response?.status) || 
                            retryableErrors.includes(error.code) ||
-                           error.message.includes('timeout');
+                           error.message.includes('timeout') ||
+                           error.message.includes('socket hang up') ||
+                           error.message.includes('network');
         
         if (!isRetryable) {
           return Promise.reject(error);
@@ -109,24 +115,37 @@ class ExternalScrapingService {
       // Prepare request for external scraping service
       const requestPayload = {
         url: cleanUrl,
-        selectors: {
-          title: options.titleSelector || 'title, h1',
-          description: options.descriptionSelector || 'meta[name="description"], meta[property="og:description"]',
-          content: options.contentSelector || 'main, article, .content, #content, body'
-        }
+        // selectors: {
+        //   title: options.titleSelector || 'title, h1',
+        //   description: options.descriptionSelector || 'meta[name="description"], meta[property="og:description"]',
+        //   content: options.contentSelector || 'main, article, .content, #content, body'
+        // }
       };
+      logger.debug('Request payload:', requestPayload);
 
       // Call external scraping service
       const response = await this.api.post('/scrape', requestPayload);
       
-      if (!response.data.success) {
+      if (!response.data || !response.data.success) {
         throw new Error('External scraping service returned unsuccessful response');
       }
 
-      const scrapedData = response.data.data;
+      const rawContent = response.data.data;
+
+      logger.debug('External API response:', {
+        hasData: !!rawContent,
+        dataType: typeof rawContent,
+        contentLength: typeof rawContent === 'string' ? rawContent.length : 'N/A',
+        contentPreview: typeof rawContent === 'string' ? rawContent.substring(0, 200) + '...' : 'N/A'
+      });
+
+      // Validate that we have content
+      if (!rawContent || (typeof rawContent === 'string' && rawContent.trim().length === 0)) {
+        throw new Error('No content could be extracted from this URL. The page might be empty, blocked, or require authentication.');
+      }
       
-      // Process and structure the data for our system
-      const processedResult = await this.processScrapedData(cleanUrl, scrapedData);
+      // Process and extract content using proper libraries
+      const processedResult = await this.extractAndProcessContent(cleanUrl, rawContent);
       
       // Store in S3
       await this.storeInS3(processedResult);
@@ -138,7 +157,7 @@ class ExternalScrapingService {
       
       return {
         url: cleanUrl,
-        title: scrapedData.title || 'Untitled',
+        title: processedResult.title || 'Untitled',
         timestamp: new Date().toISOString(),
         metadata: {
           contentHash: processedResult.contentHash,
@@ -170,6 +189,7 @@ class ExternalScrapingService {
 
   /**
    * Discover pages on a website using external crawling service
+   * Uses a fallback strategy for large sites that timeout
    * @param {string} url - Base URL to crawl
    * @param {Object} options - Crawling options
    * @returns {Promise<Object>} - Discovery result
@@ -187,31 +207,39 @@ class ExternalScrapingService {
         throw new Error('External scraping service is currently unavailable. Please try again later or contact support.');
       }
 
-      // Use enhanced crawl for comprehensive discovery
-      const requestPayload = {
-        url: cleanUrl,
-        maxDepth: options.maxDepth || 10
-      };
+      // Try comprehensive discovery first with shorter timeout
+      try {
+        const requestPayload = {
+          url: cleanUrl,
+          maxDepth: options.maxDepth || 1
+        };
 
-      const response = await this.api.post('/crawl', requestPayload);
-      
-      if (!response.data.success) {
-        throw new Error('External crawling service returned unsuccessful response');
+        // Use 20-minute timeout for long-running crawl operations
+        const response = await this.api.post('/enhanced-crawl', requestPayload, {
+          timeout: 1200000 // 20 minutes - allow sufficient time for comprehensive crawling
+        });
+        
+        if (response.data?.success) {
+          const discoveryData = response.data;
+          
+          return {
+            domain: domain,
+            totalPages: discoveryData.count,
+            discoveredUrls: discoveryData.data || [],
+            strategy: discoveryData.strategy,
+            sitemap: discoveryData.sitemap,
+            robots: discoveryData.robots,
+            errors: discoveryData.errors || [],
+            unlimited: discoveryData.unlimited,
+            timestamp: new Date().toISOString()
+          };
+        }
+      } catch (crawlError) {
+        logger.warn(`Full crawl failed for ${domain}, trying fallback strategy:`, crawlError.message);
+        
+        // Fallback: Use direct scraping with common page patterns
+        return await this.discoverPagesWithFallback(cleanUrl, options);
       }
-
-      const discoveryData = response.data;
-      
-      return {
-        domain: domain,
-        totalPages: discoveryData.count,
-        discoveredUrls: discoveryData.data || [],
-        strategy: discoveryData.strategy,
-        sitemap: discoveryData.sitemap,
-        robots: discoveryData.robots,
-        errors: discoveryData.errors || [],
-        unlimited: discoveryData.unlimited,
-        timestamp: new Date().toISOString()
-      };
 
     } catch (error) {
       logger.error('Error discovering pages via external service:', error);
@@ -232,22 +260,90 @@ class ExternalScrapingService {
   }
 
   /**
+   * Fallback discovery strategy for large sites
+   * @param {string} url - Base URL
+   * @param {Object} options - Options
+   * @returns {Promise<Object>} - Discovery result with limited pages
+   */
+  async discoverPagesWithFallback(url, options = {}) {
+    const domain = new URL(url).hostname;
+    const maxPages = Math.min(options.maxPages || 50, 100); // Cap at 100 for fallback
+    
+    logger.info(`Using fallback discovery strategy for ${domain}, limited to ${maxPages} pages`);
+    
+    // Generate common page patterns for the domain
+    const commonPatterns = [
+      url, // Home page
+      `${url}/about`,
+      `${url}/contact`,
+      `${url}/products`,
+      `${url}/services`,
+      `${url}/blog`,
+      `${url}/news`,
+      `${url}/support`,
+      `${url}/help`,
+      `${url}/faq`
+    ];
+    
+    // For e-commerce sites, add category patterns
+    if (domain.includes('shop') || domain.includes('store') || domain.includes('chef')) {
+      commonPatterns.push(
+        `${url}/category`,
+        `${url}/shop`,
+        `${url}/store`,
+        `${url}/catalog`,
+        `${url}/recipes`,
+        `${url}/collections`
+      );
+    }
+    
+    // Limit to maxPages
+    const discoveredUrls = commonPatterns.slice(0, maxPages);
+    
+    return {
+      domain: domain,
+      totalPages: discoveredUrls.length,
+      discoveredUrls: discoveredUrls,
+      strategy: 'fallback-patterns',
+      sitemap: false,
+      robots: false,
+      errors: ['Full discovery timed out, using fallback strategy with common page patterns'],
+      unlimited: false,
+      timestamp: new Date().toISOString(),
+      fallback: true,
+      fallbackReason: 'External service timeout - using common page patterns'
+    };
+  }
+
+  /**
    * Crawl and scrape entire website using external service
    * @param {string} url - Base URL to crawl and scrape
    * @param {Object} options - Crawling and scraping options
+   * @param {Function} progressCallback - Optional callback for progress updates
    * @returns {Promise<Object>} - Complete crawling result
    */
-  async crawlAndScrapeWebsite(url, options = {}) {
+  async crawlAndScrapeWebsite(url, options = {}, progressCallback = null) {
     try {
       const cleanUrl = this.sanitizeUrl(url);
       const domain = new URL(cleanUrl).hostname;
       
       logger.info(`Starting comprehensive crawl and scrape for: ${domain}`);
 
+      // Report progress: Starting discovery
+      if (progressCallback) {
+        progressCallback({
+          phase: 'discovery',
+          message: 'Discovering pages (this may take 5-10 minutes for large sites)...',
+          percentage: 10
+        });
+      }
+
       // Step 1: Discover all URLs using enhanced crawl
       const discovery = await this.discoverWebsitePages(cleanUrl, options);
       
       let urlsToScrape = discovery.discoveredUrls;
+
+      console.log(urlsToScrape, "urlsToScrape");
       
       // Apply maxPages limit if specified
       if (options.maxPages && urlsToScrape.length > options.maxPages) {
@@ -257,6 +353,19 @@ class ExternalScrapingService {
 
       logger.info(`Will scrape ${urlsToScrape.length} pages`);
 
+      // Report progress: Discovery complete, starting scraping
+      if (progressCallback) {
+        const discoveryMessage = discovery.fallback 
+          ? `Used fallback strategy: found ${discovery.totalPages} common pages to scrape`
+          : `Found ${discovery.totalPages} pages, starting to scrape ${urlsToScrape.length} pages`;
+        
+        progressCallback({
+          phase: 'scraping',
+          message: `${discoveryMessage}...`,
+          percentage: 30
+        });
+      }
+
       // Step 2: Scrape all discovered pages in batches
       const batchSize = options.batchSize || 3;
       const delay = options.delay || 2000;
@@ -265,7 +374,20 @@ class ExternalScrapingService {
 
       for (let i = 0; i < urlsToScrape.length; i += batchSize) {
         const batch = urlsToScrape.slice(i, i + batchSize);
-        logger.info(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(urlsToScrape.length/batchSize)}`);
+        const batchNumber = Math.floor(i/batchSize) + 1;
+        const totalBatches = Math.ceil(urlsToScrape.length/batchSize);
+        
+        logger.info(`Processing batch ${batchNumber}/${totalBatches}`);
+
+        // Report batch progress
+        if (progressCallback) {
+          const scrapingProgress = 30 + ((batchNumber - 1) / totalBatches) * 50; // 30-80% for scraping
+          progressCallback({
+            phase: 'scraping',
+            message: `Processing batch ${batchNumber}/${totalBatches} (${results.length}/${urlsToScrape.length} pages complete)`,
+            percentage: Math.round(scrapingProgress)
+          });
+        }
 
         const batchPromises = batch.map(async (pageUrl) => {
           try {
@@ -287,11 +409,29 @@ class ExternalScrapingService {
         }
       }
 
+      // Report progress: Scraping complete, processing results
+      if (progressCallback) {
+        progressCallback({
+          phase: 'processing',
+          message: `Scraping complete! Processing ${results.length} pages...`,
+          percentage: 85
+        });
+      }
+
       // Step 3: Generate comprehensive summary
       const summary = this.generateCrawlSummary(domain, discovery, results, errors, options);
       
       // Step 4: Store crawl metadata
       await this.storeCrawlMetadata(summary);
+
+      // Report progress: Starting knowledge base sync
+      if (progressCallback) {
+        progressCallback({
+          phase: 'sync',
+          message: 'Syncing with knowledge base...',
+          percentage: 90
+        });
+      }
 
       // Step 5: Trigger knowledge base sync (final step to avoid conflicts)
       if (results.length > 0) {
@@ -320,6 +460,15 @@ class ExternalScrapingService {
       logger.info(`  - Pages scraped: ${results.length}/${urlsToScrape.length}`);
       logger.info(`  - Success rate: ${((results.length / urlsToScrape.length) * 100).toFixed(1)}%`);
 
+      // Report final completion
+      if (progressCallback) {
+        progressCallback({
+          phase: 'completed',
+          message: `Crawl completed! Processed ${results.length} pages with ${((results.length / urlsToScrape.length) * 100).toFixed(1)}% success rate.`,
+          percentage: 100
+        });
+      }
+
       return summary;
 
     } catch (error) {
@@ -329,28 +478,291 @@ class ExternalScrapingService {
   }
 
   /**
-   * Process scraped data into our system format
+   * Check if content is HTML or plain text
+   * @param {string} content - Content to analyze
+   * @returns {boolean} - True if HTML, false if plain text
+   */
+  isHtmlContent(content) {
+    if (!content || typeof content !== 'string') {
+      return false;
+    }
+    
+    // Check for common HTML tags and patterns
+    const htmlPatterns = [
+      /<html[\s>]/i,
+      /<head[\s>]/i,
+      /<body[\s>]/i,
+      /<div[\s>]/i,
+      /<p[\s>]/i,
+      /<span[\s>]/i,
+      /<script[\s>]/i,
+      /<style[\s>]/i,
+      /<meta[\s>]/i,
+      /<title[\s>]/i,
+      /<!DOCTYPE/i
+    ];
+    
+    // If content contains multiple HTML patterns, it's likely HTML
+    const htmlMatches = htmlPatterns.filter(pattern => pattern.test(content)).length;
+    
+    // Also check for DOCTYPE or opening HTML tags
+    const hasDoctype = /<!DOCTYPE/i.test(content);
+    const hasHtmlTag = /<html/i.test(content);
+    const hasMultipleTags = (content.match(/<[^>]+>/g) || []).length > 3;
+    
+    return hasDoctype || hasHtmlTag || htmlMatches >= 2 || hasMultipleTags;
+  }
+
+  /**
+   * Process plain text content from external scraping service
    * @param {string} url - Source URL
-   * @param {Object} scrapedData - Raw scraped data from external service
+   * @param {string} plainText - Plain text content
    * @returns {Promise<Object>} - Processed data
    */
-  async processScrapedData(url, scrapedData) {
+  async processPlainTextContent(url, plainText) {
     const domain = new URL(url).hostname;
     const timestamp = new Date().toISOString();
     
-    // Extract and clean content
-    const title = scrapedData.title || '';
-    const description = scrapedData.description || '';
-    const content = scrapedData.content || '';
+    logger.debug('Processing plain text content from:', url);
     
-    // Combine all content
-    const fullContent = `${title}\n\n${description}\n\n${content}`.trim();
+    // Clean and normalize the plain text
+    const cleanedContent = this.cleanExtractedText(plainText);
+    
+    // Try to extract a title from the first meaningful line
+    const lines = cleanedContent.split('\n').filter(line => line.trim().length > 0);
+    const title = lines.length > 0 ? lines[0].trim().substring(0, 100) : 'Untitled';
+    
+    // Use the cleaned content as the full content
+    const fullContent = cleanedContent.trim();
+    
+    logger.debug('Plain text processing results:', {
+      title: title.substring(0, 100),
+      contentLength: fullContent.length,
+      contentPreview: fullContent.substring(0, 200)
+    });
+    
+    if (fullContent.length < 50) {
+      logger.warn(`Very little content extracted from ${url}: ${fullContent.length} characters`);
+      throw new Error('Insufficient content could be extracted from this page');
+    }
     
     // Generate content hash
     const contentHash = generateHash(fullContent);
     
-    // Create chunks (split content into manageable pieces)
+    // Create chunks
     const chunks = this.createContentChunks(fullContent, url, title);
+    
+    logger.info(`Successfully processed plain text from ${url}: ${chunks.length} chunks, ${fullContent.length} characters`);
+    
+    return {
+      url,
+      domain,
+      title,
+      description: '', // No description available from plain text
+      content: fullContent,
+      contentHash,
+      chunks,
+      timestamp,
+      metadata: {
+        scrapedAt: timestamp,
+        source: 'external-scraper',
+        contentLength: fullContent.length,
+        chunkCount: chunks.length,
+        originalContentLength: plainText.length,
+        extractionMethod: 'plain-text'
+      }
+    };
+  }
+
+  /**
+   * Extract and process content from raw HTML using proper libraries
+   * @param {string} url - Source URL
+   * @param {string} rawHtml - Raw HTML content from external service
+   * @param {boolean} useBackupMethod - Whether to use html-to-text directly
+   * @returns {Promise<Object>} - Processed data
+   */
+  async extractAndProcessContent(url, rawContent, useBackupMethod = false) {
+    const domain = new URL(url).hostname;
+    const timestamp = new Date().toISOString();
+    
+    logger.debug('Processing content from:', url);
+    logger.debug('Raw content length:', rawContent.length);
+    
+    // Detect if content is HTML or plain text
+    const isHtml = this.isHtmlContent(rawContent);
+    logger.debug('Content type detected:', isHtml ? 'HTML' : 'Plain Text');
+    
+    // If it's plain text, process it directly
+    if (!isHtml) {
+      return await this.processPlainTextContent(url, rawContent);
+    }
+    
+    // Load HTML into Cheerio for parsing
+    const $ = cheerio.load(rawContent);
+    
+    // Extract metadata
+    const title = $('title').text().trim() || 
+                 $('meta[property="og:title"]').attr('content') || 
+                 $('h1').first().text().trim() || 
+                 'Untitled';
+    
+    const description = $('meta[name="description"]').attr('content') || 
+                       $('meta[property="og:description"]').attr('content') || 
+                       '';
+    
+    // Remove script and style elements completely
+    $('script, style, noscript, link[rel="stylesheet"]').remove();
+    
+    // Remove common non-content elements and noise
+    $('nav, header, footer, aside, .sidebar, .menu, .navigation, .ads, .advertisement').remove();
+    $('[class*="cookie"], [class*="banner"], [class*="popup"], [class*="modal"]').remove();
+    $('[class*="osano"], [id*="osano"]').remove(); // Remove Osano cookie consent
+    $('.visually-hidden, .sr-only, .hidden').remove(); // Remove hidden elements
+    
+    // Extract main content using multiple strategies
+    let mainContent = '';
+    
+    if (useBackupMethod) {
+      // Use html-to-text directly for better content extraction
+      logger.debug('Using html-to-text backup method for content extraction');
+      mainContent = convert(rawContent, {
+        wordwrap: false,
+        ignoreHref: true,
+        ignoreImage: true,
+        preserveNewlines: false,
+        singleNewLineParagraphs: true,
+        uppercaseHeadings: false,
+        selectors: [
+          { selector: 'script', format: 'skip' },
+          { selector: 'style', format: 'skip' },
+          { selector: 'nav', format: 'skip' },
+          { selector: 'header', format: 'skip' },
+          { selector: 'footer', format: 'skip' },
+          { selector: '[class*="osano"]', format: 'skip' },
+          { selector: '[class*="cookie"]', format: 'skip' },
+          { selector: '.visually-hidden', format: 'skip' },
+          { selector: '.sr-only', format: 'skip' }
+        ]
+      });
+    } else {
+      // Strategy 1: Look for main content containers
+      const contentSelectors = [
+        'main',
+        'article', 
+        '.content',
+        '#content',
+        '.main-content',
+        '.post-content',
+        '.entry-content',
+        '.article-content',
+        '.page-content'
+      ];
+      
+      for (const selector of contentSelectors) {
+        const element = $(selector);
+        if (element.length && element.text().trim().length > mainContent.length) {
+          mainContent = element.text().trim();
+        }
+      }
+      
+      // Strategy 2: If no main content found, get body content
+      if (!mainContent || mainContent.length < 100) {
+        mainContent = $('body').text().trim();
+      }
+      
+      // Strategy 3: Use html-to-text for better text extraction as fallback
+      if (!mainContent || mainContent.length < 100) {
+        mainContent = convert(rawContent, {
+          wordwrap: false,
+          ignoreHref: true,
+          ignoreImage: true,
+          preserveNewlines: false,
+          singleNewLineParagraphs: true,
+          uppercaseHeadings: false
+        });
+      }
+    }
+    
+    // Clean and normalize the content
+    const cleanedContent = this.cleanExtractedText(mainContent);
+    
+    logger.debug('Extraction results:', {
+      title: title.substring(0, 100),
+      descriptionLength: description.length,
+      cleanedContentLength: cleanedContent.length,
+      contentPreview: cleanedContent.substring(0, 200)
+    });
+    
+    // Combine all content
+    const fullContent = [title, description, cleanedContent]
+      .filter(part => part && part.trim().length > 0)
+      .join('\n\n')
+      .trim();
+    
+    // Validate content quality - check for CSS/JS patterns that suggest bad extraction
+    const cssJsPatterns = [
+      /font-family:/gi,
+      /background-color:/gi,
+      /border-radius:/gi,
+      /osano-cm-/gi,
+      /transition-/gi,
+      /webkit-/gi
+    ];
+    
+    const hasCssJs = cssJsPatterns.some(pattern => pattern.test(fullContent));
+    const meaningfulWords = (fullContent.match(/[a-zA-Z]{3,}/g) || []).length;
+    const totalChars = fullContent.length;
+    
+    logger.debug('Content quality check:', {
+      length: totalChars,
+      meaningfulWords,
+      hasCssJs,
+      ratio: meaningfulWords / totalChars * 100
+    });
+    
+    if (fullContent.length < 50) {
+      logger.warn(`Very little content extracted from ${url}: ${fullContent.length} characters`);
+      throw new Error('Insufficient content could be extracted from this page');
+    }
+    
+    if (hasCssJs || meaningfulWords / totalChars < 0.05) {
+      logger.warn(`Poor content quality detected for ${url} - likely CSS/JS content`);
+      logger.debug('Content preview:', fullContent.substring(0, 300));
+      
+      // Try html-to-text as backup method
+      logger.debug('Attempting backup extraction with html-to-text...');
+      const backupContent = convert(rawContent, {
+        wordwrap: false,
+        ignoreHref: true,
+        ignoreImage: true,
+        preserveNewlines: false,
+        singleNewLineParagraphs: true,
+        uppercaseHeadings: false,
+        selectors: [
+          { selector: 'script', format: 'skip' },
+          { selector: 'style', format: 'skip' },
+          { selector: 'nav', format: 'skip' },
+          { selector: 'header', format: 'skip' },
+          { selector: 'footer', format: 'skip' },
+          { selector: '[class*="osano"]', format: 'skip' },
+          { selector: '[class*="cookie"]', format: 'skip' }
+        ]
+      });
+      
+      const cleanedBackup = this.cleanExtractedText(backupContent);
+      if (cleanedBackup.length > fullContent.length && !useBackupMethod) {
+        logger.debug('Using backup extraction method');
+        return await this.extractAndProcessContent(url, rawContent, true); // Recursive call with backup flag
+      }
+    }
+    
+    // Generate content hash
+    const contentHash = generateHash(fullContent);
+    
+    // Create chunks
+    const chunks = this.createContentChunks(fullContent, url, title);
+    
+    logger.info(`Successfully processed ${url}: ${chunks.length} chunks, ${fullContent.length} characters`);
     
     return {
       url,
@@ -365,13 +777,72 @@ class ExternalScrapingService {
         scrapedAt: timestamp,
         source: 'external-scraper',
         contentLength: fullContent.length,
-        chunkCount: chunks.length
+        chunkCount: chunks.length,
+        originalContentLength: rawContent.length,
+        extractionMethod: 'cheerio'
       }
     };
   }
 
   /**
-   * Create content chunks for vector storage
+   * Clean extracted text content
+   * @param {string} text - Raw extracted text
+   * @returns {string} - Cleaned text
+   */
+  cleanExtractedText(text) {
+    if (!text || typeof text !== 'string') {
+      return '';
+    }
+    
+    let cleaned = text;
+    
+    // Normalize whitespace
+    cleaned = cleaned.replace(/\s+/g, ' ');
+    cleaned = cleaned.replace(/\n\s*\n/g, '\n');
+    
+    // Remove common navigation text and noise including CSS patterns
+    const noisePatterns = [
+      /skip to (main )?content/gi,
+      /click to expand/gi,
+      /read more/gi,
+      /show more/gi,
+      /load more/gi,
+      /cookie policy/gi,
+      /privacy policy/gi,
+      /terms of service/gi,
+      /subscribe to newsletter/gi,
+      /share on \w+/gi,
+      /follow us on/gi,
+      // CSS-related patterns
+      /\.[\w-]+\s*\{[^}]*\}/g, // CSS rules
+      /font-family:\s*[^;]+;?/gi,
+      /font-size:\s*[^;]+;?/gi,
+      /background-color:\s*[^;]+;?/gi,
+      /border[^:]*:\s*[^;]+;?/gi,
+      /margin[^:]*:\s*[^;]+;?/gi,
+      /padding[^:]*:\s*[^;]+;?/gi,
+      /osano-cm-[\w-]+/gi, // Osano cookie consent CSS classes
+      /webkit-[\w-]+/gi,
+      /transition[^:]*:\s*[^;]+;?/gi
+    ];
+    
+    noisePatterns.forEach(pattern => {
+      cleaned = cleaned.replace(pattern, '');
+    });
+    
+    // Remove email addresses and URLs that might be leftover
+    cleaned = cleaned.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '');
+    cleaned = cleaned.replace(/https?:\/\/[^\s]+/gi, '');
+    
+    // Final cleanup
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    
+    return cleaned;
+  }
+
+  /**
+   * Create intelligent content chunks for vector storage
+   * Optimized for Pinecone's 40KB metadata limit to maximize content density
    * @param {string} content - Full content text
    * @param {string} url - Source URL
    * @param {string} title - Page title
@@ -379,64 +850,239 @@ class ExternalScrapingService {
    */
   createContentChunks(content, url, title) {
     const chunks = [];
-    const chunkSize = 1000; // Characters per chunk
-    const overlapSize = 100; // Overlap between chunks
+    
+    // Enhanced chunking strategy for maximum Pinecone utilization
+    // Pinecone metadata limit: 40KB per record
+    // Strategy: Create larger, semantically rich chunks with hierarchical content
+    const primaryChunkSize = 15000; // Primary content (15KB)
+    const contextChunkSize = 20000; // Additional context (20KB) 
+    const totalMaxSize = 35000; // Reserve 5KB for metadata overhead
+    const overlapSize = 500; // Larger overlap for better context continuity
     
     if (!content || content.length === 0) {
       return chunks;
     }
 
-    // Split content into sentences for better chunking
-    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    // Enhanced semantic chunking with hierarchical content organization
+    const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0);
     
     let currentChunk = '';
+    let contextualContent = ''; // Additional context for better semantic understanding
     let chunkIndex = 0;
     
-    for (const sentence of sentences) {
-      const sentenceWithPunctuation = sentence.trim() + '.';
+    // Create section-aware chunking for better semantic coherence
+    for (const paragraph of paragraphs) {
+      const trimmedParagraph = paragraph.trim();
       
-      if (currentChunk.length + sentenceWithPunctuation.length > chunkSize && currentChunk.length > 0) {
-        // Create chunk
-        const chunkId = generateChunkId(url, chunkIndex);
-        chunks.push({
-          id: chunkId,
-          content: currentChunk.trim(),
-          metadata: {
-            url,
-            title,
-            chunkIndex,
-            contentLength: currentChunk.length,
-            source: 'external-scraper'
-          }
-        });
+      // Check if this paragraph looks like a heading/section marker
+      const isHeading = this.isLikelyHeading(trimmedParagraph);
+      
+      // If adding this paragraph would exceed our primary chunk size
+      if (currentChunk.length + trimmedParagraph.length > primaryChunkSize && currentChunk.length > 0) {
         
-        // Start new chunk with overlap
-        const words = currentChunk.split(' ');
-        const overlapWords = words.slice(-Math.floor(overlapSize / 5)); // Approximate word overlap
-        currentChunk = overlapWords.join(' ') + ' ' + sentenceWithPunctuation;
+        // Build contextual content from surrounding paragraphs for richer embedding
+        const contextStartIdx = Math.max(0, paragraphs.indexOf(trimmedParagraph) - 3);
+        const contextEndIdx = Math.min(paragraphs.length, paragraphs.indexOf(trimmedParagraph) + 3);
+        const contextParagraphs = paragraphs.slice(contextStartIdx, contextEndIdx);
+        contextualContent = contextParagraphs.join('\n\n').substring(0, contextChunkSize);
+        
+        // Create enhanced chunk with primary content + contextual information
+        chunks.push(this.createEnhancedChunk(
+          currentChunk.trim(), 
+          contextualContent,
+          url, 
+          title, 
+          chunkIndex,
+          { isHeadingStart: isHeading }
+        ));
         chunkIndex++;
+        
+        // Smart overlap strategy: preserve more context for headings
+        if (currentChunk.length > overlapSize) {
+          const words = currentChunk.split(' ');
+          const overlapWords = isHeading ? 
+            words.slice(-Math.floor(overlapSize / 3)) : // More overlap for headings
+            words.slice(-Math.floor(overlapSize / 6));   // Standard overlap
+          currentChunk = overlapWords.join(' ') + '\n\n' + trimmedParagraph;
+        } else {
+          currentChunk = trimmedParagraph;
+        }
       } else {
-        currentChunk += (currentChunk ? ' ' : '') + sentenceWithPunctuation;
+        // Add paragraph to current chunk
+        currentChunk += (currentChunk ? '\n\n' : '') + trimmedParagraph;
+      }
+      
+      // Handle very long paragraphs by splitting at sentence boundaries
+      if (trimmedParagraph.length > primaryChunkSize) {
+        const sentences = this.splitIntoSentences(trimmedParagraph);
+        currentChunk = ''; // Reset current chunk
+        
+        let sentenceChunk = '';
+        for (const sentence of sentences) {
+          if (sentenceChunk.length + sentence.length > primaryChunkSize && sentenceChunk.length > 0) {
+            // Get contextual content for this sentence chunk
+            const sentenceContext = this.buildSentenceContext(sentence, content, contextChunkSize);
+            
+            chunks.push(this.createEnhancedChunk(
+              sentenceChunk.trim(), 
+              sentenceContext,
+              url, 
+              title, 
+              chunkIndex,
+              { isLongParagraphSplit: true }
+            ));
+            chunkIndex++;
+            
+            // Add overlap for sentence chunks
+            const words = sentenceChunk.split(' ');
+            const overlapWords = words.slice(-Math.floor(overlapSize / 6));
+            sentenceChunk = overlapWords.join(' ') + ' ' + sentence;
+          } else {
+            sentenceChunk += (sentenceChunk ? ' ' : '') + sentence;
+          }
+        }
+        
+        // Add remaining sentence chunk
+        if (sentenceChunk.trim().length > 0) {
+          currentChunk = sentenceChunk;
+        }
       }
     }
     
     // Add final chunk if there's remaining content
     if (currentChunk.trim().length > 0) {
-      const chunkId = generateChunkId(url, chunkIndex);
-      chunks.push({
-        id: chunkId,
-        content: currentChunk.trim(),
-        metadata: {
-          url,
-          title,
-          chunkIndex,
-          contentLength: currentChunk.length,
-          source: 'external-scraper'
-        }
-      });
+      // Build final contextual content
+      const finalContext = content.substring(Math.max(0, content.length - contextChunkSize));
+      
+      chunks.push(this.createEnhancedChunk(
+        currentChunk.trim(),
+        finalContext,
+        url,
+        title,
+        chunkIndex,
+        { isFinalChunk: true }
+      ));
     }
     
-    return chunks;
+    // Filter out chunks that don't meet minimum quality threshold
+    return chunks.filter(chunk => this.isValidChunk(chunk));
+  }
+
+  /**
+   * Create an enhanced chunk object with maximum content density for Pinecone
+   * @param {string} primaryContent - Main chunk content
+   * @param {string} contextualContent - Additional contextual content
+   * @param {string} url - Source URL
+   * @param {string} title - Page title
+   * @param {number} index - Chunk index
+   * @param {Object} chunkMetadata - Additional chunk characteristics
+   * @returns {Object} - Enhanced chunk object
+   */
+  createEnhancedChunk(primaryContent, contextualContent, url, title, index, chunkMetadata = {}) {
+    const chunkId = generateChunkId(url, index);
+    
+    // Combine primary and contextual content with clear separation
+    const fullContent = `PRIMARY CONTENT:\n${primaryContent}\n\nCONTEXTUAL INFORMATION:\n${contextualContent}`;
+    
+    // Ensure we don't exceed Pinecone's 40KB metadata limit
+    const maxContentSize = 35000; // Reserve 5KB for metadata overhead
+    const finalContent = fullContent.length > maxContentSize ? 
+      fullContent.substring(0, maxContentSize) + '...[TRUNCATED]' : 
+      fullContent;
+    
+    return {
+      id: chunkId,
+      content: finalContent,
+      metadata: {
+        url,
+        title,
+        chunkIndex: index,
+        primaryContentLength: primaryContent.length,
+        contextualContentLength: contextualContent.length,
+        totalContentLength: finalContent.length,
+        source: 'external-scraper',
+        createdAt: new Date().toISOString(),
+        chunkType: 'enhanced-dense',
+        contentDensity: Math.round((finalContent.length / 40000) * 100), // Percentage of Pinecone limit used
+        ...chunkMetadata
+      }
+    };
+  }
+
+  /**
+   * Check if a paragraph is likely a heading/section marker
+   * @param {string} paragraph - Paragraph text
+   * @returns {boolean} - Whether it's likely a heading
+   */
+  isLikelyHeading(paragraph) {
+    if (!paragraph || paragraph.length === 0) return false;
+    
+    // Heuristics for heading detection
+    const isShort = paragraph.length < 100;
+    const hasCapitalization = /^[A-Z]/.test(paragraph);
+    const endsWithoutPeriod = !paragraph.trim().endsWith('.');
+    const hasHeadingWords = /^(chapter|section|part|step|\d+\.|\d+\))/i.test(paragraph);
+    const isAllCaps = paragraph === paragraph.toUpperCase() && paragraph.length > 5;
+    
+    return (isShort && hasCapitalization && endsWithoutPeriod) || hasHeadingWords || isAllCaps;
+  }
+
+  /**
+   * Split text into sentences more intelligently
+   * @param {string} text - Text to split
+   * @returns {Array} - Array of sentences
+   */
+  splitIntoSentences(text) {
+    // Enhanced sentence splitting that handles abbreviations and edge cases
+    const sentences = text
+      .split(/(?<!\b(?:Dr|Mr|Mrs|Ms|Prof|Inc|Ltd|Co|vs|etc|i\.e|e\.g)\.)(?<=[.!?])\s+/)
+      .filter(s => s.trim().length > 10);
+    
+    return sentences.map(s => s.trim());
+  }
+
+  /**
+   * Build contextual information around a sentence
+   * @param {string} sentence - Target sentence
+   * @param {string} fullContent - Full document content
+   * @param {number} maxContextSize - Maximum context size
+   * @returns {string} - Contextual content
+   */
+  buildSentenceContext(sentence, fullContent, maxContextSize) {
+    const sentenceIndex = fullContent.indexOf(sentence);
+    if (sentenceIndex === -1) return sentence;
+    
+    // Get context before and after the sentence
+    const contextBefore = fullContent.substring(
+      Math.max(0, sentenceIndex - Math.floor(maxContextSize / 2)), 
+      sentenceIndex
+    );
+    const contextAfter = fullContent.substring(
+      sentenceIndex + sentence.length,
+      Math.min(fullContent.length, sentenceIndex + sentence.length + Math.floor(maxContextSize / 2))
+    );
+    
+    return (contextBefore + sentence + contextAfter).substring(0, maxContextSize);
+  }
+
+  /**
+   * Validate if a chunk meets quality standards
+   * @param {Object} chunk - Chunk object to validate
+   * @returns {boolean} - Whether chunk is valid
+   */
+  isValidChunk(chunk) {
+    if (!chunk || !chunk.content) return false;
+    
+    const content = chunk.content;
+    const metadata = chunk.metadata || {};
+    
+    // Quality checks
+    const hasMinimumContent = content.length >= 200; // Increased minimum for dense chunks
+    const hasReasonableWordsRatio = (content.match(/[a-zA-Z]{3,}/g) || []).length / content.length > 0.05;
+    const hasMetadata = metadata.url && metadata.title;
+    const hasGoodDensity = metadata.contentDensity && metadata.contentDensity > 0.5; // At least 0.5% of Pinecone limit
+    
+    return hasMinimumContent && hasReasonableWordsRatio && hasMetadata && hasGoodDensity;
   }
 
   /**
@@ -484,9 +1130,19 @@ class ExternalScrapingService {
       // Store Bedrock KB-friendly plain text files (per-chunk) under kb/ prefix
       // This enables the Bedrock Knowledge Base (with Pinecone) to ingest high-quality text directly
       const kbBasePrefix = `kb/${domain}/${timestamp.split('T')[0]}/${urlHash}`;
-      // Full document file for context/debugging
+      
+      // Full document file for context/debugging with enriched metadata
       const fullDocKey = `${kbBasePrefix}/full.txt`;
-      const fullDocBody = `Title: ${processedData.title || ''}\nURL: ${processedData.url}\n\n${processedData.content || ''}`;
+      const fullDocBody = `Title: ${processedData.title || 'Untitled'}
+URL: ${processedData.url}
+Domain: ${processedData.domain}
+Description: ${processedData.description || 'No description available'}
+Extracted: ${processedData.timestamp}
+Content Length: ${processedData.content?.length || 0} characters
+Chunks: ${processedData.chunks?.length || 0}
+
+${processedData.content || ''}`;
+      
       await this.s3Client.send(new PutObjectCommand({
         Bucket: this.bucket,
         Key: fullDocKey,
@@ -495,7 +1151,11 @@ class ExternalScrapingService {
         Metadata: {
           url: processedData.url,
           title: processedData.title || '',
-          source: 'external-scraper'
+          domain: processedData.domain,
+          contentlength: String(processedData.content?.length || 0),
+          chunkcount: String(processedData.chunks?.length || 0),
+          source: 'external-scraper',
+          extractionmethod: processedData.metadata?.extractionMethod || 'cheerio'
         }
       }));
 
