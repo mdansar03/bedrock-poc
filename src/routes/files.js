@@ -20,12 +20,12 @@ router.post('/upload',
   ],
   async (req, res) => {
     try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
+      const validationErrors = validationResult(req);
+      if (!validationErrors.isEmpty()) {
         return res.status(400).json({
           success: false,
           error: 'Validation failed',
-          details: errors.array()
+          details: validationErrors.array()
         });
       }
 
@@ -38,7 +38,7 @@ router.post('/upload',
 
       const { title, description, category, tags } = req.body;
       const results = [];
-      const errors = [];
+      const processingErrors = [];
 
       logger.info(`Processing ${req.files.length} uploaded files`);
 
@@ -73,7 +73,7 @@ router.post('/upload',
         if (result.success) {
           results.push(result.result);
         } else {
-          errors.push({
+          processingErrors.push({
             fileName: result.fileName,
             error: result.error
           });
@@ -87,15 +87,15 @@ router.post('/upload',
           files: results,
           totalFiles: req.files.length,
           successfulFiles: results.length,
-          failedFiles: errors.length,
+          failedFiles: processingErrors.length,
           totalContentLength: results.reduce((sum, r) => sum + (r.contentLength || 0), 0),
           totalChunks: results.reduce((sum, r) => sum + (r.chunkCount || 0), 0)
         }
       };
 
-      if (errors.length > 0) {
-        response.errors = errors;
-        response.warning = `${errors.length} files failed to process`;
+      if (processingErrors.length > 0) {
+        response.errors = processingErrors;
+        response.warning = `${processingErrors.length} files failed to process`;
       }
 
       const statusCode = results.length > 0 ? 200 : 400;

@@ -3,6 +3,7 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { generateHash, generateChunkId } = require('../utils/hash');
 const logger = require('../utils/logger');
 const knowledgeBaseSync = require('./knowledgeBaseSync');
+const bedrockKnowledgeBaseService = require('./bedrockKnowledgeBaseService');
 const cheerio = require('cheerio');
 const TurndownService = require('turndown');
 const { convert } = require('html-to-text');
@@ -1086,7 +1087,7 @@ class ExternalScrapingService {
   }
 
   /**
-   * Store processed data in S3
+   * Store processed data using Bedrock Knowledge Base Service (optimized S3 format)
    * @param {Object} processedData - Processed scraping data
    */
   async storeInS3(processedData) {
@@ -1095,94 +1096,73 @@ class ExternalScrapingService {
       const timestamp = processedData.timestamp;
       const urlHash = generateHash(processedData.url);
       
-      // Store raw content
-      const rawKey = `raw/${domain}/${timestamp.split('T')[0]}/${urlHash}.json`;
+      // Store raw content backup for reference (follows correct S3 structure)
+      const rawKey = `raw-content/web-scrapes/${domain}/${timestamp.split('T')[0]}/${urlHash}.json`;
       await this.s3Client.send(new PutObjectCommand({
         Bucket: this.bucket,
         Key: rawKey,
         Body: JSON.stringify({
-          url: processedData.url,
+          content_id: urlHash,
+          source_type: 'web_scrape',
+          source_url: processedData.url,
           title: processedData.title,
           content: processedData.content,
+          chunks: processedData.chunks.map((chunk, index) => ({
+            chunk_id: `${urlHash}-${index + 1}`,
+            content: chunk.content,
+            chunk_index: index + 1,
+            word_count: chunk.content.split(/\s+/).length,
+            metadata: {
+              section: `chunk-${index + 1}`,
+              chunkId: chunk.chunkId
+            }
+          })),
+          processed_timestamp: timestamp,
+          content_hash: processedData.contentHash,
+          file_type: 'html',
+          language: 'en'
+        }),
+        ContentType: 'application/json',
+        Metadata: {
+          domain: domain,
+          url: processedData.url,
+          title: processedData.title || 'Untitled',
           contentHash: processedData.contentHash,
+          chunkCount: String(processedData.chunks.length),
           scrapedAt: timestamp,
           source: 'external-scraper'
-        }),
-        ContentType: 'application/json'
-      }));
-      
-      // Store processed chunks
-      const processedKey = `processed/${domain}/${timestamp.split('T')[0]}/${urlHash}.json`;
-      await this.s3Client.send(new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: processedKey,
-        Body: JSON.stringify({
-          url: processedData.url,
-          domain: processedData.domain,
-          title: processedData.title,
-          chunks: processedData.chunks,
-          metadata: processedData.metadata,
-          processedAt: timestamp
-        }),
-        ContentType: 'application/json'
-      }));
-      
-      // Store Bedrock KB-friendly plain text files (per-chunk) under kb/ prefix
-      // This enables the Bedrock Knowledge Base (with Pinecone) to ingest high-quality text directly
-      const kbBasePrefix = `kb/${domain}/${timestamp.split('T')[0]}/${urlHash}`;
-      
-      // Full document file for context/debugging with enriched metadata
-      const fullDocKey = `${kbBasePrefix}/full.txt`;
-      const fullDocBody = `Title: ${processedData.title || 'Untitled'}
-URL: ${processedData.url}
-Domain: ${processedData.domain}
-Description: ${processedData.description || 'No description available'}
-Extracted: ${processedData.timestamp}
-Content Length: ${processedData.content?.length || 0} characters
-Chunks: ${processedData.chunks?.length || 0}
-
-${processedData.content || ''}`;
-      
-      await this.s3Client.send(new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: fullDocKey,
-        Body: fullDocBody,
-        ContentType: 'text/plain',
-        Metadata: {
-          url: processedData.url,
-          title: processedData.title || '',
-          domain: processedData.domain,
-          contentlength: String(processedData.content?.length || 0),
-          chunkcount: String(processedData.chunks?.length || 0),
-          source: 'external-scraper',
-          extractionmethod: processedData.metadata?.extractionMethod || 'cheerio'
         }
       }));
-
-      // Write each chunk as a separate .txt object for optimal ingestion
-      for (const chunk of processedData.chunks) {
-        const idx = typeof chunk.metadata?.chunkIndex === 'number' ? chunk.metadata.chunkIndex : 0;
-        const chunkKey = `${kbBasePrefix}/chunk-${String(idx).padStart(4, '0')}.txt`;
-        await this.s3Client.send(new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: chunkKey,
-          Body: chunk.content || '',
-          ContentType: 'text/plain',
-          Metadata: {
-            url: processedData.url,
-            title: processedData.title || '',
-            chunkindex: String(idx),
-            source: 'external-scraper'
-          }
-        }));
-      }
-
-      logger.info(`Stored scraped data in S3: ${rawKey}, ${processedKey}`);
-      logger.info(`Stored KB-ingestion assets in S3 under: ${kbBasePrefix}/`);
+      
+      // Use the optimized Bedrock Knowledge Base Service for main storage
+      const document = {
+        content: processedData.content,
+        title: processedData.title,
+        url: processedData.url,
+        metadata: {
+          ...processedData.metadata,
+          domain: domain,
+          contentHash: processedData.contentHash,
+          scrapedAt: timestamp,
+          source: 'external-scraper',
+          extractionMethod: 'web-scraping'
+        }
+      };
+      
+      const kbResult = await bedrockKnowledgeBaseService.storeDocument(document);
+      
+      logger.info(`Stored scraped content optimally: ${kbResult.s3Key} with ${kbResult.chunkCount} chunks`);
+      
+      return {
+        ...kbResult,
+        rawKey,
+        domain,
+        chunkCount: kbResult.chunkCount
+      };
       
     } catch (error) {
       logger.error('Error storing data in S3:', error);
-      throw error;
+      throw new Error(`Failed to store data in S3: ${error.message}`);
     }
   }
 

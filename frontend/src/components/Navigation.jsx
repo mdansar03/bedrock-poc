@@ -1,13 +1,13 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, Globe, MessageCircle } from 'lucide-react'
+import { Home, Database, MessageCircle } from 'lucide-react'
 
 const Navigation = () => {
   const location = useLocation()
 
   const navItems = [
     { path: '/', name: 'Home', icon: Home },
-    { path: '/scraping', name: 'Website Scraping', icon: Globe },
+    { path: '/knowledge', name: 'Knowledge Base', icon: Database },
     { path: '/chat', name: 'AI Chat', icon: MessageCircle },
   ]
 

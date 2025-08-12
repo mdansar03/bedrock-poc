@@ -43,21 +43,21 @@ class FileProcessingService {
    */
   async initializeOptionalDependencies() {
     try {
-      pdf = await import('pdf-parse');
+      pdf = require('pdf-parse');
       logger.debug('PDF processing enabled');
     } catch (error) {
       logger.warn('PDF processing not available. Install pdf-parse for PDF support.');
     }
 
     try {
-      mammoth = await import('mammoth');
+      mammoth = require('mammoth');
       logger.debug('DOCX processing enabled');
     } catch (error) {
       logger.warn('DOCX processing not available. Install mammoth for DOCX support.');
     }
 
     try {
-      xlsx = await import('xlsx');
+      xlsx = require('xlsx');
       logger.debug('Excel processing enabled');
     } catch (error) {
       logger.warn('Excel processing not available. Install xlsx for Excel support.');
@@ -280,7 +280,7 @@ class FileProcessingService {
     }
 
     try {
-      const data = await pdf.default(buffer);
+      const data = await pdf(buffer);
       return {
         content: data.text,
         method: 'pdf-parse',
@@ -302,7 +302,7 @@ class FileProcessingService {
     }
 
     try {
-      const result = await mammoth.default.extractRawText({ buffer });
+      const result = await mammoth.extractRawText({ buffer });
       return {
         content: result.value,
         method: 'mammoth',
@@ -372,12 +372,12 @@ class FileProcessingService {
     }
 
     try {
-      const workbook = xlsx.default.read(buffer, { type: 'buffer' });
+      const workbook = xlsx.read(buffer, { type: 'buffer' });
       const sheets = [];
       
       workbook.SheetNames.forEach(sheetName => {
         const sheet = workbook.Sheets[sheetName];
-        const csvText = xlsx.default.utils.sheet_to_csv(sheet);
+        const csvText = xlsx.utils.sheet_to_csv(sheet);
         if (csvText.trim()) {
           sheets.push(`Sheet: ${sheetName}\n${csvText}`);
         }
@@ -419,7 +419,7 @@ class FileProcessingService {
   }
 
   /**
-   * Store original file in S3 for reference
+   * Store original file in S3 for reference (following correct bucket structure)
    * @param {Object} file - Original file
    * @param {string} fileId - Unique file ID
    * @returns {Promise<string>} - S3 key of stored file
@@ -427,8 +427,19 @@ class FileProcessingService {
   async storeOriginalFile(file, fileId) {
     try {
       const timestamp = new Date().toISOString();
-      const ext = path.extname(file.originalname);
-      const key = `files/original/${timestamp.split('T')[0]}/${fileId}${ext}`;
+      const ext = path.extname(file.originalname).toLowerCase();
+      
+      // Determine file type folder based on extension
+      let fileTypeFolder;
+      if (['.pdf'].includes(ext)) {
+        fileTypeFolder = 'pdfs';
+      } else if (['.docx', '.doc', '.rtf'].includes(ext)) {
+        fileTypeFolder = 'docs';
+      } else {
+        fileTypeFolder = 'others'; // For txt, md, csv, xlsx, etc.
+      }
+      
+      const key = `raw-content/documents/${fileTypeFolder}/${fileId}${ext}`;
       
       const command = new PutObjectCommand({
         Bucket: this.bucket,
@@ -439,10 +450,11 @@ class FileProcessingService {
           originalName: file.originalname,
           fileId: fileId,
           uploadedAt: timestamp,
-          fileSize: String(file.size)
+          fileSize: String(file.size),
+          fileType: fileTypeFolder
         },
         // Add tags for organization
-        Tagging: `FileType=original&Extension=${ext.substring(1)}&FileId=${fileId}`
+        Tagging: `FileType=original&Extension=${ext.substring(1)}&FileId=${fileId}&Category=${fileTypeFolder}`
       });
 
       await this.s3Client.send(command);

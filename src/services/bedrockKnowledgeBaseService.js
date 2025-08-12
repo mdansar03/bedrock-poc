@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { BedrockAgentClient, StartIngestionJobCommand, GetIngestionJobCommand, ListIngestionJobsCommand } = require('@aws-sdk/client-bedrock-agent');
 const { generateHash } = require('../utils/hash');
 const logger = require('../utils/logger');
@@ -63,12 +63,104 @@ class BedrockKnowledgeBaseService {
       // Generate unique document ID
       const documentId = generateHash(url || title || content.substring(0, 100));
       const timestamp = new Date().toISOString();
-      const s3Key = `documents/${timestamp.split('T')[0]}/${documentId}.txt`;
       
-      // Format document for Bedrock
+      // Store processed chunks in correct structure
+      const sourceType = metadata?.source === 'external-scraper' ? 'web-content' : 'document-content';
+      
+      // Store individual chunks first
+      const chunkKeys = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const chunkId = generateHash(`${documentId}-chunk-${i + 1}`);
+        const chunkKey = `processed-chunks/${sourceType}/${chunkId}.json`;
+        
+        const chunkData = {
+          chunk_id: chunkId,
+          document_id: documentId,
+          source_type: sourceType,
+          source_url: url || metadata?.url,
+          title: title,
+          content: chunk,
+          chunk_index: i + 1,
+          total_chunks: chunks.length,
+          word_count: chunk.split(/\s+/).length,
+          processed_timestamp: timestamp,
+          metadata: {
+            ...metadata,
+            section: `chunk-${i + 1}`,
+            documentId
+          }
+        };
+        
+        await this.s3Client.send(new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: chunkKey,
+          Body: JSON.stringify(chunkData, null, 2),
+          ContentType: 'application/json',
+          Metadata: {
+            documentId,
+            chunkId,
+            chunkIndex: String(i + 1),
+            sourceType,
+            processedAt: timestamp
+          }
+        }));
+        
+        chunkKeys.push(chunkKey);
+      }
+      
+      // Store metadata index
+      const metadataKey = `metadata/content-index.json`;
+      const indexEntry = {
+        document_id: documentId,
+        title: title,
+        source_url: url || metadata?.url,
+        source_type: sourceType,
+        chunk_count: chunks.length,
+        total_word_count: chunks.reduce((sum, chunk) => sum + chunk.split(/\s+/).length, 0),
+        processed_timestamp: timestamp,
+        chunk_keys: chunkKeys,
+        metadata: {
+          ...metadata,
+          originalLength: content.length,
+          processedLength: cleanedContent.length
+        }
+      };
+      
+      // Read existing index, add new entry, and write back
+      let existingIndex = [];
+      try {
+        const getCommand = new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: metadataKey
+        });
+        const response = await this.s3Client.send(getCommand);
+        const body = await this.streamToBuffer(response.Body);
+        existingIndex = JSON.parse(body.toString());
+      } catch (error) {
+        // File doesn't exist yet, start with empty array
+        if (error.name !== 'NoSuchKey') {
+          logger.warn('Could not read existing index:', error.message);
+        }
+      }
+      
+      existingIndex.push(indexEntry);
+      
+      await this.s3Client.send(new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: metadataKey,
+        Body: JSON.stringify(existingIndex, null, 2),
+        ContentType: 'application/json',
+        Metadata: {
+          lastUpdated: timestamp,
+          totalDocuments: String(existingIndex.length)
+        }
+      }));
+      
+      // Also create the traditional documents format for Bedrock KB compatibility
+      const s3Key = `documents/${timestamp.split('T')[0]}/${documentId}.txt`;
       const formattedContent = this.formatDocumentForBedrock(chunks, metadata, title, url);
       
-      // Store in S3
       await this.uploadToS3(s3Key, formattedContent, {
         ...metadata,
         documentId,
@@ -425,6 +517,19 @@ class BedrockKnowledgeBaseService {
         error: error.message
       };
     }
+  }
+
+  /**
+   * Convert stream to buffer
+   * @param {ReadableStream} stream - Stream to convert
+   * @returns {Promise<Buffer>} - Buffer
+   */
+  async streamToBuffer(stream) {
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
   }
 }
 

@@ -168,6 +168,47 @@ export const syncAPI = {
   }
 };
 
+export const filesAPI = {
+  uploadFiles: async (formData) => {
+    const response = await api.post('/files/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+  
+  getInfo: async () => {
+    const response = await api.get('/files/info');
+    return response.data;
+  },
+  
+  getSyncStatus: async (jobId) => {
+    const response = await api.get(`/files/sync-status/${jobId}`);
+    return response.data;
+  },
+  
+  getSyncJobs: async (limit = 10) => {
+    const response = await api.get(`/files/sync-jobs?limit=${limit}`);
+    return response.data;
+  },
+  
+  getStats: async () => {
+    const response = await api.get('/files/stats');
+    return response.data;
+  },
+  
+  triggerSync: async () => {
+    const response = await api.post('/files/sync');
+    return response.data;
+  },
+  
+  checkHealth: async () => {
+    const response = await api.get('/files/health');
+    return response.data;
+  }
+};
+
 export const healthAPI = {
   checkHealth: async () => {
     const response = await api.get('/health');

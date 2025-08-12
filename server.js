@@ -7,6 +7,7 @@ require('dotenv').config();
 const logger = require('./src/utils/logger');
 const scrapingRoutes = require('./src/routes/scraping');
 const chatRoutes = require('./src/routes/chat');
+const filesRoutes = require('./src/routes/files');
 const healthRoutes = require('./src/routes/health');
 
 const app = express();
@@ -58,6 +59,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // API routes
 app.use('/api/health', healthRoutes);
 app.use('/api/scraping', scrapingRoutes);
+app.use('/api/files', filesRoutes);
 app.use('/api/chat', chatRoutes);
 
 // Error handling middleware
