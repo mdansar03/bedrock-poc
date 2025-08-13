@@ -123,7 +123,7 @@ export const scrapingAPI = {
 };
 
 export const chatAPI = {
-  sendMessage: async (message, sessionId = null, model = null) => {
+  sendMessage: async (message, sessionId = null, model = null, useAgent = null, enhancementOptions = {}) => {
     const payload = { message };
     if (sessionId) {
       payload.sessionId = sessionId;
@@ -131,17 +131,31 @@ export const chatAPI = {
     if (model) {
       payload.model = model;
     }
+    if (useAgent !== null) {
+      payload.useAgent = useAgent;
+    }
+    if (Object.keys(enhancementOptions).length > 0) {
+      payload.enhancementOptions = enhancementOptions;
+    }
     const response = await api.post('/chat/query', payload);
     return response.data;
   },
   
-  sendDirectMessage: async (prompt) => {
-    const response = await api.post('/chat/direct', { prompt });
+  sendDirectMessage: async (prompt, model = null, enhancementOptions = {}) => {
+    const payload = { prompt };
+    if (model) {
+      payload.model = model;
+    }
+    if (Object.keys(enhancementOptions).length > 0) {
+      payload.enhancementOptions = enhancementOptions;
+    }
+    const response = await api.post('/chat/direct', payload);
     return response.data;
   },
   
-  testKnowledgeBase: async () => {
-    const response = await api.get('/chat/test');
+  testKnowledgeBase: async (useAgent = false) => {
+    const params = useAgent ? '?useAgent=true' : '';
+    const response = await api.get(`/chat/test${params}`);
     return response.data;
   },
   
@@ -152,6 +166,86 @@ export const chatAPI = {
   
   getModels: async () => {
     const response = await api.get('/chat/models');
+    return response.data;
+  },
+
+  getEnhancementOptions: async () => {
+    const response = await api.get('/chat/enhancement-options');
+    return response.data;
+  },
+
+  getStatus: async () => {
+    const response = await api.get('/chat/status');
+    return response.data;
+  }
+};
+
+// New Agent API functions
+export const agentAPI = {
+  // Send message to Bedrock Agent
+  sendMessage: async (message, sessionId = null, options = {}) => {
+    const payload = { message };
+    if (sessionId) {
+      payload.sessionId = sessionId;
+    }
+    if (Object.keys(options).length > 0) {
+      payload.options = options;
+    }
+    const response = await api.post('/chat/agent', payload);
+    return response.data;
+  },
+
+  // Get agent information and status
+  getInfo: async () => {
+    const response = await api.get('/chat/agent/info');
+    return response.data;
+  },
+
+  // Test agent connectivity
+  test: async () => {
+    const response = await api.get('/chat/agent/test');
+    return response.data;
+  },
+
+  // Get agent health status
+  getHealth: async () => {
+    const response = await api.get('/chat/agent/health');
+    return response.data;
+  },
+
+  // Get active sessions
+  getSessions: async () => {
+    const response = await api.get('/chat/agent/sessions');
+    return response.data;
+  },
+
+  // Setup and configuration
+  setup: async (config = {}) => {
+    const response = await api.post('/chat/agent/setup', config);
+    return response.data;
+  },
+
+  // List existing agents
+  list: async (maxResults = 50) => {
+    const response = await api.get(`/chat/agent/list?maxResults=${maxResults}`);
+    return response.data;
+  },
+
+  // Check agent status
+  getStatus: async (agentId) => {
+    const response = await api.get(`/chat/agent/status/${agentId}`);
+    return response.data;
+  },
+
+  // Update agent configuration
+  update: async (agentId, updates) => {
+    const response = await api.put(`/chat/agent/${agentId}`, updates);
+    return response.data;
+  },
+
+  // Get environment configuration
+  getConfig: async () => {
+    const response = await api.get('/chat/agent/config');
     return response.data;
   }
 };
@@ -205,6 +299,61 @@ export const filesAPI = {
   
   checkHealth: async () => {
     const response = await api.get('/files/health');
+    return response.data;
+  }
+};
+
+export const dataManagementAPI = {
+  // Get all domains summary
+  getDomains: async () => {
+    const response = await api.get('/data-management/domains');
+    return response.data;
+  },
+  
+  // Get documents for a specific domain
+  getDocumentsByDomain: async (domain) => {
+    const response = await api.get(`/data-management/domains/${domain}/documents`);
+    return response.data;
+  },
+  
+  // Get documents for a specific URL
+  getDocumentsByUrl: async (url) => {
+    const response = await api.get(`/data-management/urls/documents?url=${encodeURIComponent(url)}`);
+    return response.data;
+  },
+  
+  // Delete domain data (with confirmation)
+  deleteDomainData: async (domain, options = {}) => {
+    const params = new URLSearchParams();
+    if (options.dryRun) params.append('dryRun', 'true');
+    if (options.confirm) params.append('confirm', domain);
+    if (options.syncKnowledgeBase !== undefined) params.append('syncKnowledgeBase', options.syncKnowledgeBase);
+    
+    const response = await api.delete(`/data-management/domains/${domain}?${params}`);
+    return response.data;
+  },
+  
+  // Delete URL data (with confirmation)
+  deleteUrlData: async (url, options = {}) => {
+    const params = new URLSearchParams();
+    params.append('url', url);
+    if (options.dryRun) params.append('dryRun', 'true');
+    if (options.confirm) params.append('confirm', options.confirm);
+    if (options.syncKnowledgeBase !== undefined) params.append('syncKnowledgeBase', options.syncKnowledgeBase);
+    
+    const response = await api.delete(`/data-management/urls?${params}`);
+    return response.data;
+  },
+  
+  // Get deletion preview for domain
+  getDomainDeletionPreview: async (domain) => {
+    const response = await api.get(`/data-management/domains/${domain}/deletion-preview`);
+    return response.data;
+  },
+  
+  // Get deletion preview for URL
+  getUrlDeletionPreview: async (url) => {
+    const response = await api.get(`/data-management/urls/deletion-preview?url=${encodeURIComponent(url)}`);
     return response.data;
   }
 };

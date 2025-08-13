@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { MessageCircle, Send, User, Bot, Loader, ExternalLink, TestTube } from 'lucide-react'
-import { chatAPI } from '../utils/api'
+import { MessageCircle, Send, User, Bot, Loader, ExternalLink, TestTube, Settings, Zap } from 'lucide-react'
+import { chatAPI, agentAPI } from '../utils/api'
 
 const ChatPage = () => {
   const [messages, setMessages] = useState([
@@ -16,6 +16,14 @@ const ChatPage = () => {
   const [sessionId, setSessionId] = useState(null)
   const [selectedModel, setSelectedModel] = useState(null)
   const [availableModels, setAvailableModels] = useState({})
+  const [useAgent, setUseAgent] = useState(true) // Default to agent if available
+  const [agentInfo, setAgentInfo] = useState(null)
+  const [enhancementOptions, setEnhancementOptions] = useState({
+    includeExamples: true,
+    requestElaboration: true,
+    structureResponse: true
+  })
+  const [showSettings, setShowSettings] = useState(false)
   
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -26,6 +34,7 @@ const ChatPage = () => {
 
   useEffect(() => {
     loadAvailableModels()
+    checkAgentAvailability()
   }, [])
 
   const loadAvailableModels = async () => {
@@ -38,32 +47,51 @@ const ChatPage = () => {
     }
   }
 
+  const checkAgentAvailability = async () => {
+    try {
+      const response = await agentAPI.getInfo()
+      if (response.success && response.data.agent.configured) {
+        setAgentInfo(response.data.agent)
+        setUseAgent(true)
+      } else {
+        setUseAgent(false)
+      }
+    } catch (error) {
+      console.warn('Agent not available, falling back to direct knowledge base:', error)
+      setUseAgent(false)
+    }
+  }
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  const handleKnowledgeBaseTest = async () => {
+  const handleConnectivityTest = async () => {
     setLoading(true)
     
     const testMessage = {
       id: Date.now(),
       type: 'user',
-      content: 'Testing knowledge base connectivity...',
+      content: `Testing ${useAgent ? 'agent' : 'knowledge base'} connectivity...`,
       timestamp: new Date().toISOString()
     }
     
     setMessages(prev => [...prev, testMessage])
     
     try {
-      const response = await chatAPI.testKnowledgeBase()
+      const response = useAgent ? 
+        await agentAPI.test() : 
+        await chatAPI.testKnowledgeBase()
       
       const botMessage = {
         id: Date.now() + 1,
         type: 'bot',
-        content: `Knowledge Base Test Result:\n\n${response.data.answer}`,
-        sources: response.data.sources,
+        content: `${useAgent ? 'Agent' : 'Knowledge Base'} Test Result:\n\n${response.data.answer || response.data.response}`,
+        sources: response.data.sources || response.data.citations,
         timestamp: new Date().toISOString(),
-        isTest: true
+        isTest: true,
+        method: response.method || (useAgent ? 'agent' : 'knowledge_base'),
+        agentMetadata: response.data.agentMetadata
       }
       
       setMessages(prev => [...prev, botMessage])
@@ -71,7 +99,7 @@ const ChatPage = () => {
       const errorMessage = {
         id: Date.now() + 1,
         type: 'bot',
-        content: `Knowledge Base Test Failed: ${error.response?.data?.message || error.message}`,
+        content: `${useAgent ? 'Agent' : 'Knowledge Base'} Test Failed: ${error.response?.data?.message || error.message}`,
         error: true,
         timestamp: new Date().toISOString(),
         isTest: true
@@ -100,7 +128,24 @@ const ChatPage = () => {
     setLoading(true)
 
     try {
-      const response = await chatAPI.sendMessage(userMessage.content, sessionId, selectedModel)
+      let response;
+      
+      if (useAgent && agentInfo) {
+        // Use agent API
+        response = await agentAPI.sendMessage(userMessage.content, sessionId, {
+          useEnhancement: enhancementOptions.requestElaboration,
+          sessionConfig: { preferences: enhancementOptions }
+        })
+      } else {
+        // Use traditional chat API with agent fallback
+        response = await chatAPI.sendMessage(
+          userMessage.content, 
+          sessionId, 
+          selectedModel, 
+          useAgent, 
+          enhancementOptions
+        )
+      }
       
       // Update session ID if we got a new one from the server
       if (response.data.sessionId && response.data.sessionId !== sessionId) {
@@ -111,8 +156,10 @@ const ChatPage = () => {
         id: Date.now() + 1,
         type: 'bot',
         content: response.data.answer,
-        sources: response.data.sources,
+        sources: response.data.sources || response.data.citations,
         model: response.data.model,
+        method: response.data.method,
+        agentMetadata: response.data.agentMetadata,
         timestamp: new Date().toISOString()
       }
 
@@ -150,19 +197,108 @@ const ChatPage = () => {
           <div className="flex items-center">
             <MessageCircle className="w-8 h-8 text-blue-600 mr-3" />
             <h1 className="text-3xl font-bold text-gray-900">AI Chat</h1>
+            {useAgent && agentInfo && (
+              <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                <Zap size={12} className="mr-1" />
+                Agent Mode
+              </span>
+            )}
           </div>
-          <button
-            onClick={handleKnowledgeBaseTest}
-            disabled={loading}
-            className="btn-secondary flex items-center space-x-2"
-          >
-            <TestTube size={18} />
-            <span>Test Knowledge Base</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="btn-secondary flex items-center space-x-2"
+              title="Chat Settings"
+            >
+              <Settings size={18} />
+              <span className="hidden sm:inline">Settings</span>
+            </button>
+            <button
+              onClick={handleConnectivityTest}
+              disabled={loading}
+              className="btn-secondary flex items-center space-x-2"
+            >
+              <TestTube size={18} />
+              <span>Test {useAgent ? 'Agent' : 'KB'}</span>
+            </button>
+          </div>
         </div>
         <p className="text-gray-600">
-          Ask questions about your scraped content. I'll use the knowledge base to provide accurate answers.
+          Ask questions about your scraped content. I'll use {useAgent ? 'intelligent agents' : 'the knowledge base'} to provide accurate answers.
         </p>
+        
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h3 className="text-lg font-semibold mb-3">Chat Settings</h3>
+            
+            {/* Agent Mode Toggle */}
+            <div className="mb-4">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={useAgent && agentInfo}
+                  onChange={(e) => setUseAgent(e.target.checked && agentInfo)}
+                  disabled={!agentInfo}
+                  className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <span className="text-sm font-medium">
+                  Use Bedrock Agent {!agentInfo && '(Not Available)'}
+                </span>
+              </label>
+              <p className="text-xs text-gray-500 ml-6">
+                {agentInfo ? 'Use intelligent agents for enhanced responses' : 'Agent not configured - will use direct knowledge base'}
+              </p>
+            </div>
+
+            {/* Enhancement Options */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold">Response Enhancement</h4>
+              
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={enhancementOptions.includeExamples}
+                  onChange={(e) => setEnhancementOptions(prev => ({ ...prev, includeExamples: e.target.checked }))}
+                  className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <span className="text-sm">Include Examples</span>
+              </label>
+              
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={enhancementOptions.requestElaboration}
+                  onChange={(e) => setEnhancementOptions(prev => ({ ...prev, requestElaboration: e.target.checked }))}
+                  className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <span className="text-sm">Request Detailed Explanations</span>
+              </label>
+              
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={enhancementOptions.structureResponse}
+                  onChange={(e) => setEnhancementOptions(prev => ({ ...prev, structureResponse: e.target.checked }))}
+                  className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <span className="text-sm">Structure Responses</span>
+              </label>
+            </div>
+
+            {/* Agent Info */}
+            {agentInfo && (
+              <div className="mt-4 p-3 bg-blue-50 rounded border border-blue-200">
+                <h5 className="text-sm font-semibold text-blue-900">Agent Information</h5>
+                <div className="text-xs text-blue-700 mt-1">
+                  <p>Name: {agentInfo.agentName}</p>
+                  <p>Status: {agentInfo.status}</p>
+                  <p>Model: {agentInfo.foundationModel}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Chat Container */}
@@ -205,16 +341,31 @@ const ChatPage = () => {
                           {message.sources.map((source, index) => (
                             <div key={index} className="text-sm">
                               <a
-                                href={source.url || '#'}
+                                href={source.url || source.metadata?.[0]?.location?.s3Location?.uri || '#'}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="flex items-center text-blue-300 hover:text-blue-100"
                               >
                                 <ExternalLink size={12} className="mr-1" />
-                                {source.title || `Source ${index + 1}`}
+                                {source.title || source.metadata?.[0]?.sourceMetadata?.title || `Source ${index + 1}`}
                               </a>
                             </div>
                           ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Agent Metadata */}
+                    {message.agentMetadata && (
+                      <div className="mt-3 pt-3 border-t border-gray-300">
+                        <div className="text-xs text-gray-400 space-y-1">
+                          <p>Method: {message.method}</p>
+                          {message.agentMetadata.responseTime && (
+                            <p>Response Time: {message.agentMetadata.responseTime}ms</p>
+                          )}
+                          {message.agentMetadata.analysis && (
+                            <p>Interaction Style: {message.agentMetadata.analysis.interactionStyle}</p>
+                          )}
                         </div>
                       </div>
                     )}
@@ -303,7 +454,10 @@ const ChatPage = () => {
           
           <div className="mt-2 flex justify-between text-xs text-gray-500">
             <span>Session ID: {sessionId || 'New session will be created'}</span>
-            <span>Model: {availableModels[Object.keys(availableModels).find(key => availableModels[key].id === selectedModel)]?.name || 'Default'}</span>
+            <div className="flex items-center space-x-4">
+              <span>Mode: {useAgent ? 'Agent' : 'Knowledge Base'}</span>
+              <span>Model: {availableModels[Object.keys(availableModels).find(key => availableModels[key].id === selectedModel)]?.name || 'Default'}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -315,9 +469,10 @@ const ChatPage = () => {
           <div className="space-y-2 text-sm text-gray-600">
             <p>• Ask specific questions about products, recipes, classes, and detailed content from scraped websites</p>
             <p>• Reference specific products by name, ingredients from recipes, or class details</p>
-            <p>• Use different AI models for varied response styles and capabilities</p>
+            <p>• {useAgent ? 'Agent mode provides intelligent reasoning and contextual responses' : 'Use different AI models for varied response styles and capabilities'}</p>
             <p>• Ask for summaries, comparisons, or detailed explanations about structured data</p>
             <p>• Query about prices, specifications, instructions, or any detailed information</p>
+            <p>• {useAgent ? 'Agents maintain conversation context and provide follow-up suggestions' : 'Enable agent mode in settings for enhanced conversational AI'}</p>
           </div>
         </div>
       )}

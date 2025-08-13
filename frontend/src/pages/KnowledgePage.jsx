@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Upload, Globe, CheckCircle, AlertCircle, Clock, ExternalLink, FileText, Wifi, WifiOff, Plus, X } from 'lucide-react'
+import { Upload, Globe, CheckCircle, AlertCircle, Clock, ExternalLink, FileText, Wifi, WifiOff, Plus, X, FolderOpen } from 'lucide-react'
 import { scrapingAPI, filesAPI } from '../utils/api'
 
 const KnowledgePage = () => {
@@ -730,12 +730,21 @@ const KnowledgePage = () => {
           <p className="text-blue-800 mb-4">
             Your content has been successfully processed and is now available in your knowledge base.
           </p>
-          <a
-            href="/chat"
-            className="btn-primary"
-          >
-            Start Chatting About This Content
-          </a>
+          <div className="flex space-x-3">
+            <a
+              href="/chat"
+              className="btn-primary"
+            >
+              Start Chatting About This Content
+            </a>
+            <a
+              href="/data"
+              className="btn-secondary flex items-center space-x-2"
+            >
+              <FolderOpen size={18} />
+              <span>View All Data</span>
+            </a>
+          </div>
         </div>
       )}
 

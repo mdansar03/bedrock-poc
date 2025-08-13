@@ -1,13 +1,58 @@
 const express = require('express');
 const { body, validationResult, query } = require('express-validator');
 const bedrockService = require('../services/bedrockService');
+const bedrockAgentService = require('../services/bedrockAgentService');
 const logger = require('../utils/logger');
 
 const router = express.Router();
 
 /**
- * Get available foundation models
- * GET /api/chat/models
+ * @swagger
+ * /api/chat/models:
+ *   get:
+ *     summary: Get available foundation models
+ *     description: Retrieve a list of all available AI foundation models with their configurations and the default model ID
+ *     tags: [Chat]
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved available models
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             example: "anthropic.claude-3-sonnet-20240229-v1:0"
+ *                           name:
+ *                             type: string
+ *                             example: "Claude 3 Sonnet"
+ *                           provider:
+ *                             type: string
+ *                             example: "Anthropic"
+ *                           maxTokens:
+ *                             type: integer
+ *                             example: 4096
+ *                     defaultModel:
+ *                       type: string
+ *                       example: "anthropic.claude-3-sonnet-20240229-v1:0"
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/models', async (req, res) => {
   try {
@@ -32,8 +77,88 @@ router.get('/models', async (req, res) => {
 });
 
 /**
- * Get available enhancement options and their descriptions
- * GET /api/chat/enhancement-options
+ * @swagger
+ * /api/chat/enhancement-options:
+ *   get:
+ *     summary: Get available enhancement options
+ *     description: Retrieve all available response enhancement options and their configurations for customizing AI responses
+ *     tags: [Chat]
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved enhancement options
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     responseTypes:
+ *                       type: object
+ *                       properties:
+ *                         auto:
+ *                           type: object
+ *                           properties:
+ *                             description:
+ *                               type: string
+ *                             default:
+ *                               type: boolean
+ *                         general:
+ *                           type: object
+ *                           properties:
+ *                             description:
+ *                               type: string
+ *                             default:
+ *                               type: boolean
+ *                         technical:
+ *                           type: object
+ *                           properties:
+ *                             description:
+ *                               type: string
+ *                             default:
+ *                               type: boolean
+ *                         business:
+ *                           type: object
+ *                           properties:
+ *                             description:
+ *                               type: string
+ *                             default:
+ *                               type: boolean
+ *                     options:
+ *                       type: object
+ *                       properties:
+ *                         maxTokens:
+ *                           type: object
+ *                           properties:
+ *                             type:
+ *                               type: string
+ *                               example: "number"
+ *                             default:
+ *                               type: integer
+ *                               example: 2000
+ *                             range:
+ *                               type: array
+ *                               items:
+ *                                 type: integer
+ *                               example: [100, 4000]
+ *                         temperature:
+ *                           type: object
+ *                           properties:
+ *                             type:
+ *                               type: string
+ *                               example: "number"
+ *                             default:
+ *                               type: number
+ *                               example: 0.7
+ *                             range:
+ *                               type: array
+ *                               items:
+ *                                 type: number
+ *                               example: [0, 1]
  */
 router.get('/enhancement-options', (req, res) => {
   res.json({
@@ -96,8 +221,113 @@ router.get('/enhancement-options', (req, res) => {
 });
 
 /**
- * Chat with the AI using RAG
- * POST /api/chat/query
+ * @swagger
+ * /api/chat/query:
+ *   post:
+ *     summary: Chat with AI using RAG (Enhanced with Agent Support)
+ *     description: Send a message to the AI chatbot with support for enhanced responses, model selection, and optional agent routing
+ *     tags: [Chat]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - message
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 minLength: 1
+ *                 maxLength: 2000
+ *                 example: "What are the latest AI trends in 2024?"
+ *                 description: "The user's question or message"
+ *               sessionId:
+ *                 type: string
+ *                 example: "session-123-456-789"
+ *                 description: "Optional session ID for conversation continuity"
+ *               model:
+ *                 type: string
+ *                 example: "anthropic.claude-3-sonnet-20240229-v1:0"
+ *                 description: "Optional model ID to use for this query"
+ *               useAgent:
+ *                 type: boolean
+ *                 example: true
+ *                 description: "Whether to use Bedrock Agent for knowledge base queries"
+ *               enhancementOptions:
+ *                 type: object
+ *                 properties:
+ *                   responseType:
+ *                     type: string
+ *                     enum: [auto, general, technical, business]
+ *                     example: "auto"
+ *                     description: "Type of response enhancement to apply"
+ *                   includeExamples:
+ *                     type: boolean
+ *                     example: true
+ *                     description: "Include examples in the response"
+ *                   requestElaboration:
+ *                     type: boolean
+ *                     example: true
+ *                     description: "Request detailed explanations"
+ *                   structureResponse:
+ *                     type: boolean
+ *                     example: true
+ *                     description: "Structure response with clear sections"
+ *                   includeContext:
+ *                     type: boolean
+ *                     example: true
+ *                     description: "Include relevant background context"
+ *                   maxTokens:
+ *                     type: integer
+ *                     minimum: 100
+ *                     maximum: 4000
+ *                     example: 2000
+ *                     description: "Maximum tokens for response generation"
+ *                   temperature:
+ *                     type: number
+ *                     minimum: 0
+ *                     maximum: 1
+ *                     example: 0.7
+ *                     description: "Response creativity level"
+ *           examples:
+ *             basicQuery:
+ *               summary: Basic query
+ *               value:
+ *                 message: "What is machine learning?"
+ *             enhancedQuery:
+ *               summary: Enhanced technical query
+ *               value:
+ *                 message: "Explain neural networks"
+ *                 enhancementOptions:
+ *                   responseType: "technical"
+ *                   includeExamples: true
+ *                   maxTokens: 1500
+ *             agentQuery:
+ *               summary: Knowledge base query using agent
+ *               value:
+ *                 message: "Find information about our product specifications"
+ *                 useAgent: true
+ *                 sessionId: "session-agent-001"
+ *     responses:
+ *       200:
+ *         description: Successfully generated response
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ChatResponse'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/query', [
   body('message')
@@ -113,6 +343,10 @@ router.post('/query', [
     .optional()
     .isString()
     .withMessage('Model must be a string'),
+  body('useAgent')
+    .optional()
+    .isBoolean()
+    .withMessage('Use agent must be a boolean'),
   body('enhancementOptions')
     .optional()
     .isObject()
@@ -148,10 +382,13 @@ router.post('/query', [
       message, 
       sessionId = null, 
       model = null, 
+      useAgent = process.env.BEDROCK_AGENT_ID ? true : false, // Default to agent if available
       enhancementOptions = {} 
     } = req.body;
 
     logger.info(`Received chat query: ${message.substring(0, 100)}...`);
+    logger.info(`Using ${useAgent ? 'Agent' : 'Direct Knowledge Base'} approach`);
+    
     if (model) {
       logger.info(`Using model: ${model}`);
     }
@@ -159,16 +396,63 @@ router.post('/query', [
       logger.info(`Enhancement options:`, enhancementOptions);
     }
 
-    // Query the knowledge base with selected model and enhancement options
-    const response = await bedrockService.queryKnowledgeBase(message, sessionId, model, enhancementOptions);
+    let response;
+
+    if (useAgent) {
+      // Use Bedrock Agent for intelligent knowledge retrieval
+      try {
+        const agentResponse = await bedrockAgentService.invokeAgent(message, sessionId, {
+          useEnhancement: enhancementOptions.useEnhancement !== false,
+          sessionConfig: enhancementOptions.sessionConfig || {}
+        });
+
+        response = {
+          answer: agentResponse.answer,
+          sources: agentResponse.citations.map(citation => ({
+            content: citation.generatedResponsePart?.textResponsePart?.text || '',
+            metadata: citation.retrievedReferences || []
+          })),
+          sessionId: agentResponse.sessionId,
+          model: agentResponse.metadata.agentId,
+          agentMetadata: {
+            analysis: agentResponse.analysis,
+            session: agentResponse.session,
+            agentId: agentResponse.metadata.agentId,
+            responseTime: agentResponse.metadata.responseTime,
+            tokensUsed: agentResponse.metadata.tokensUsed
+          },
+          method: 'agent'
+        };
+      } catch (agentError) {
+        logger.warn('Agent call failed, falling back to direct knowledge base:', agentError.message);
+        
+        // Fallback to direct knowledge base if agent fails
+        const kbResponse = await bedrockService.queryKnowledgeBase(message, sessionId, model, enhancementOptions);
+        response = {
+          answer: kbResponse.answer,
+          sources: kbResponse.sources,
+          sessionId: kbResponse.sessionId,
+          model: bedrockService.getModelId(model),
+          method: 'knowledge_base_fallback',
+          fallbackReason: agentError.message
+        };
+      }
+    } else {
+      // Use direct knowledge base query
+      const kbResponse = await bedrockService.queryKnowledgeBase(message, sessionId, model, enhancementOptions);
+      response = {
+        answer: kbResponse.answer,
+        sources: kbResponse.sources,
+        sessionId: kbResponse.sessionId,
+        model: bedrockService.getModelId(model),
+        method: 'knowledge_base'
+      };
+    }
 
     res.json({
       success: true,
       data: {
-        answer: response.answer,
-        sources: response.sources,
-        sessionId: response.sessionId,
-        model: bedrockService.getModelId(model),
+        ...response,
         timestamp: new Date().toISOString()
       }
     });
@@ -306,37 +590,72 @@ router.get('/session/:sessionId', (req, res) => {
 });
 
 /**
- * Test knowledge base connectivity
+ * Test connectivity (both knowledge base and agent)
  * GET /api/chat/test
  */
 router.get('/test', async (req, res) => {
   try {
     const testQuery = "What information is available in the knowledge base?";
+    const useAgent = req.query.useAgent === 'true' || process.env.BEDROCK_AGENT_ID ? true : false;
     
-    logger.info('Testing knowledge base connectivity...');
+    logger.info(`Testing ${useAgent ? 'agent' : 'knowledge base'} connectivity...`);
     
-    const response = await bedrockService.queryKnowledgeBase(testQuery, 'test-session');
+    let response;
+    let method;
+
+    if (useAgent) {
+      try {
+        const agentResponse = await bedrockAgentService.invokeAgent(testQuery, 'test-agent-session');
+        response = {
+          query: testQuery,
+          answer: agentResponse.answer,
+          sources: agentResponse.citations,
+          sessionId: agentResponse.sessionId,
+          agentMetadata: agentResponse.metadata
+        };
+        method = 'agent';
+      } catch (agentError) {
+        logger.warn('Agent test failed, testing knowledge base:', agentError.message);
+        const kbResponse = await bedrockService.queryKnowledgeBase(testQuery, 'test-kb-session');
+        response = {
+          query: testQuery,
+          answer: kbResponse.answer,
+          sources: kbResponse.sources,
+          sessionId: kbResponse.sessionId,
+          fallbackReason: agentError.message
+        };
+        method = 'knowledge_base_fallback';
+      }
+    } else {
+      const kbResponse = await bedrockService.queryKnowledgeBase(testQuery, 'test-kb-session');
+      response = {
+        query: testQuery,
+        answer: kbResponse.answer,
+        sources: kbResponse.sources,
+        sessionId: kbResponse.sessionId
+      };
+      method = 'knowledge_base';
+    }
     
     res.json({
       success: true,
-      message: 'Knowledge base test successful',
+      message: `${method.replace('_', ' ')} test successful`,
+      method,
       data: {
-        query: testQuery,
-        answer: response.answer,
-        sources: response.sources,
-        sessionId: response.sessionId,
+        ...response,
         timestamp: new Date().toISOString()
       }
     });
     
   } catch (error) {
-    logger.error('Knowledge base test failed:', error);
+    logger.error('Connectivity test failed:', error);
     res.status(500).json({
       success: false,
-      error: 'Knowledge base test failed',
+      error: 'Connectivity test failed',
       message: error.message,
       details: {
         knowledgeBaseId: process.env.BEDROCK_KNOWLEDGE_BASE_ID,
+        agentId: process.env.BEDROCK_AGENT_ID,
         region: process.env.AWS_REGION
       }
     });

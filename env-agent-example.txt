@@ -1,0 +1,37 @@
+# Bedrock Agent Configuration - Add these to your .env file
+
+# Existing Configuration (required)
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_access_key_here
+AWS_SECRET_ACCESS_KEY=your_secret_key_here
+BEDROCK_KNOWLEDGE_BASE_ID=your_knowledge_base_id
+BEDROCK_DATA_SOURCE_ID=your_data_source_id
+BEDROCK_S3_BUCKET=your_s3_bucket_name
+DEFAULT_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+
+# NEW: Bedrock Agent Configuration
+BEDROCK_AGENT_ID=your_agent_id_here
+BEDROCK_AGENT_ALIAS_ID=TSTALIASID
+BEDROCK_AGENT_SERVICE_ROLE=arn:aws:iam::YOUR_ACCOUNT:role/AmazonBedrockExecutionRoleForAgents_YourAgentName
+
+# Optional: Rate Limiting Configuration
+BEDROCK_MAX_CONCURRENT=2
+BEDROCK_MIN_INTERVAL=1500
+BEDROCK_MAX_RETRIES=5
+BEDROCK_BASE_DELAY=2000
+BEDROCK_MAX_DELAY=30000
+
+# Instructions:
+# 1. Create a Bedrock Agent using AWS Console or the setup API
+# 2. Copy the Agent ID and update BEDROCK_AGENT_ID above
+# 3. Create an IAM service role for the agent with proper permissions
+# 4. Update BEDROCK_AGENT_SERVICE_ROLE with your role ARN
+# 5. Restart your application
+# 6. Test agent functionality using /api/chat/agent/test
+
+# Quick Setup via API:
+# POST /api/chat/agent/setup
+# {
+#   "agentName": "Knowledge-Assistant-Agent",
+#   "description": "Intelligent assistant with knowledge base access"
+# }

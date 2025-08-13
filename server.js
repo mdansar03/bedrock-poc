@@ -7,8 +7,13 @@ require('dotenv').config();
 const logger = require('./src/utils/logger');
 const scrapingRoutes = require('./src/routes/scraping');
 const chatRoutes = require('./src/routes/chat');
+const agentRoutes = require('./src/routes/agent');
 const filesRoutes = require('./src/routes/files');
 const healthRoutes = require('./src/routes/health');
+const dataManagementRoutes = require('./src/routes/dataManagement');
+
+// Swagger configuration
+const { specs, swaggerUi, swaggerUiOptions } = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -28,25 +33,47 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // CORS configuration (supports multiple origins via CORS_ORIGINS or FRONTEND_URL)
-const configuredOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173')
+const defaultOrigins = `http://localhost:5173,http://localhost:${PORT},http://localhost:3002`;
+let originsString = process.env.CORS_ORIGINS || defaultOrigins;
+
+// If FRONTEND_URL is set and CORS_ORIGINS is not, combine them
+if (!process.env.CORS_ORIGINS && process.env.FRONTEND_URL) {
+  originsString = `${process.env.FRONTEND_URL},http://localhost:${PORT},http://localhost:3002`;
+}
+
+const configuredOrigins = originsString
   .split(',')
   .map(o => o.trim())
   .filter(Boolean);
 
+// Log configured origins for debugging
+logger.info(`🌐 CORS configured origins: ${JSON.stringify(configuredOrigins)}`);
+
 app.use(cors({
   origin: (origin, callback) => {
+    // Log the incoming origin for debugging
+    logger.info(`🔍 CORS check for origin: ${origin}`);
+    
     // Allow non-browser or same-origin requests (no Origin header)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      logger.info('✅ CORS allowed: No origin header (same-origin or non-browser request)');
+      return callback(null, true);
+    }
 
     // Exact match against configured origins
-    if (configuredOrigins.includes(origin)) return callback(null, true);
+    if (configuredOrigins.includes(origin)) {
+      logger.info(`✅ CORS allowed: Origin ${origin} is in configured list`);
+      return callback(null, true);
+    }
 
     // Optional: allow all Vercel preview domains when enabled
     const allowVercelWildcard = process.env.CORS_ALLOW_VERCEL_WILDCARD === 'true';
     if (allowVercelWildcard && /https?:\/\/.*\.vercel\.app$/.test(origin)) {
+      logger.info(`✅ CORS allowed: Vercel domain ${origin}`);
       return callback(null, true);
     }
 
+    logger.error(`❌ CORS rejected: Origin ${origin} not in allowed list: ${JSON.stringify(configuredOrigins)}`);
     return callback(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true
@@ -56,11 +83,16 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Swagger API documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, swaggerUiOptions));
+
 // API routes
 app.use('/api/health', healthRoutes);
 app.use('/api/scraping', scrapingRoutes);
 app.use('/api/files', filesRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/chat/agent', agentRoutes);
+app.use('/api/data-management', dataManagementRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -9,8 +9,75 @@ const logger = require('../utils/logger');
 const router = express.Router();
 
 /**
- * Scrape a single page
- * POST /api/scraping/scrape
+ * @swagger
+ * /api/scraping/scrape:
+ *   post:
+ *     summary: Scrape a single page
+ *     description: Extract content from a single web page and optionally add it to the knowledge base
+ *     tags: [Scraping]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ScrapingRequest'
+ *           examples:
+ *             basicScrape:
+ *               summary: Basic page scraping
+ *               value:
+ *                 url: "https://example.com/article"
+ *             advancedScrape:
+ *               summary: Advanced scraping with options
+ *               value:
+ *                 url: "https://example.com/documentation"
+ *                 options:
+ *                   maxDepth: 2
+ *                   respectRobots: true
+ *                   includeImages: false
+ *                   customSelectors:
+ *                     content: ".main-content"
+ *                     title: "h1"
+ *     responses:
+ *       200:
+ *         description: Successfully scraped the page
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Page scraped successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     url:
+ *                       type: string
+ *                     title:
+ *                       type: string
+ *                     content:
+ *                       type: string
+ *                     metadata:
+ *                       type: object
+ *                     processingTime:
+ *                       type: string
+ *                     documentId:
+ *                       type: string
+ *       400:
+ *         description: Validation error or invalid URL
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Scraping failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/scrape', [
   body('url')

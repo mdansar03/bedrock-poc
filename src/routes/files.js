@@ -7,8 +7,103 @@ const logger = require('../utils/logger');
 const router = express.Router();
 
 /**
- * Upload and process files
- * POST /api/files/upload
+ * @swagger
+ * /api/files/upload:
+ *   post:
+ *     summary: Upload and process files
+ *     description: Upload multiple files (PDF, DOCX, TXT, etc.) and process them for knowledge base integration
+ *     tags: [Files]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               files:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: "Files to upload (max 10 files)"
+ *               title:
+ *                 type: string
+ *                 example: "Technical Documentation"
+ *                 description: "Optional title for the uploaded files"
+ *               description:
+ *                 type: string
+ *                 example: "User manuals and API documentation"
+ *                 description: "Optional description of the files"
+ *               category:
+ *                 type: string
+ *                 example: "documentation"
+ *                 description: "Optional category classification"
+ *               tags:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 example: ["manual", "api", "technical"]
+ *                 description: "Optional tags for file classification"
+ *     responses:
+ *       200:
+ *         description: Files uploaded and processed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Files processed successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     processed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           filename:
+ *                             type: string
+ *                           status:
+ *                             type: string
+ *                           documentId:
+ *                             type: string
+ *                           s3Key:
+ *                             type: string
+ *                     failed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           filename:
+ *                             type: string
+ *                           error:
+ *                             type: string
+ *                     summary:
+ *                       type: object
+ *                       properties:
+ *                         total:
+ *                           type: integer
+ *                         successful:
+ *                           type: integer
+ *                         failed:
+ *                           type: integer
+ *       400:
+ *         description: Validation error or no files uploaded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Server error during file processing
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/upload', 
   fileProcessingService.getUploadConfig().array('files', 10), // Max 10 files

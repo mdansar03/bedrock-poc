@@ -620,13 +620,34 @@ class ExternalScrapingService {
     $('[class*="osano"], [id*="osano"]').remove(); // Remove Osano cookie consent
     $('.visually-hidden, .sr-only, .hidden').remove(); // Remove hidden elements
     
+    // Remove form elements that often contain technical noise
+    $('form, input, select, textarea, button').remove();
+    
+    // Remove any remaining script-like content that might have been embedded as text
+    $('*').each(function() {
+      const text = $(this).text();
+      if (text.includes('---EMBEDDED SCRIPT DATA---') || 
+          text.includes('var ') || 
+          text.includes('function ') ||
+          text.includes('$(document)') ||
+          text.includes('window.') ||
+          text.match(/\w+\s*=\s*new\s+\w+/)) {
+        $(this).remove();
+      }
+    });
+    
     // Extract main content using multiple strategies
     let mainContent = '';
     
     if (useBackupMethod) {
       // Use html-to-text directly for better content extraction
       logger.debug('Using html-to-text backup method for content extraction');
-      mainContent = convert(rawContent, {
+      
+      // Pre-process the raw content to remove embedded script sections
+      let preprocessedContent = rawContent;
+      preprocessedContent = preprocessedContent.replace(/---EMBEDDED SCRIPT DATA---[\s\S]*?(?=---|\n\n|\r\n\r\n|$)/gi, '');
+      
+      mainContent = convert(preprocessedContent, {
         wordwrap: false,
         ignoreHref: true,
         ignoreImage: true,
@@ -639,6 +660,9 @@ class ExternalScrapingService {
           { selector: 'nav', format: 'skip' },
           { selector: 'header', format: 'skip' },
           { selector: 'footer', format: 'skip' },
+          { selector: 'form', format: 'skip' },
+          { selector: 'input', format: 'skip' },
+          { selector: 'button', format: 'skip' },
           { selector: '[class*="osano"]', format: 'skip' },
           { selector: '[class*="cookie"]', format: 'skip' },
           { selector: '.visually-hidden', format: 'skip' },
@@ -673,13 +697,24 @@ class ExternalScrapingService {
       
       // Strategy 3: Use html-to-text for better text extraction as fallback
       if (!mainContent || mainContent.length < 100) {
-        mainContent = convert(rawContent, {
+        // Pre-process to remove embedded script sections
+        let preprocessedContent = rawContent;
+        preprocessedContent = preprocessedContent.replace(/---EMBEDDED SCRIPT DATA---[\s\S]*?(?=---|\n\n|\r\n\r\n|$)/gi, '');
+        
+        mainContent = convert(preprocessedContent, {
           wordwrap: false,
           ignoreHref: true,
           ignoreImage: true,
           preserveNewlines: false,
           singleNewLineParagraphs: true,
-          uppercaseHeadings: false
+          uppercaseHeadings: false,
+          selectors: [
+            { selector: 'script', format: 'skip' },
+            { selector: 'style', format: 'skip' },
+            { selector: 'form', format: 'skip' },
+            { selector: 'input', format: 'skip' },
+            { selector: 'button', format: 'skip' }
+          ]
         });
       }
     }
@@ -707,7 +742,18 @@ class ExternalScrapingService {
       /border-radius:/gi,
       /osano-cm-/gi,
       /transition-/gi,
-      /webkit-/gi
+      /webkit-/gi,
+      /---EMBEDDED SCRIPT DATA---/gi,
+      /var\s+\w+\s*=/gi,
+      /function\s+\w+\s*\(/gi,
+      /document\.\w+/gi,
+      /window\.\w+/gi,
+      /\$\(document\)/gi,
+      /googleGeocodeKey/gi,
+      /SYNCHRONIZER_TOKEN/gi,
+      /MM_\w+/gi,
+      /mouseflow/gi,
+      /issuuembed/gi
     ];
     
     const hasCssJs = cssJsPatterns.some(pattern => pattern.test(fullContent));
@@ -732,7 +778,12 @@ class ExternalScrapingService {
       
       // Try html-to-text as backup method
       logger.debug('Attempting backup extraction with html-to-text...');
-      const backupContent = convert(rawContent, {
+      
+      // Pre-process to remove embedded script sections
+      let preprocessedContent = rawContent;
+      preprocessedContent = preprocessedContent.replace(/---EMBEDDED SCRIPT DATA---[\s\S]*?(?=---|\n\n|\r\n\r\n|$)/gi, '');
+      
+      const backupContent = convert(preprocessedContent, {
         wordwrap: false,
         ignoreHref: true,
         ignoreImage: true,
@@ -745,6 +796,9 @@ class ExternalScrapingService {
           { selector: 'nav', format: 'skip' },
           { selector: 'header', format: 'skip' },
           { selector: 'footer', format: 'skip' },
+          { selector: 'form', format: 'skip' },
+          { selector: 'input', format: 'skip' },
+          { selector: 'button', format: 'skip' },
           { selector: '[class*="osano"]', format: 'skip' },
           { selector: '[class*="cookie"]', format: 'skip' }
         ]
@@ -797,12 +851,66 @@ class ExternalScrapingService {
     
     let cleaned = text;
     
-    // Normalize whitespace
-    cleaned = cleaned.replace(/\s+/g, ' ');
-    cleaned = cleaned.replace(/\n\s*\n/g, '\n');
+    // Remove embedded script data sections completely - enhanced pattern
+    cleaned = cleaned.replace(/---EMBEDDED SCRIPT DATA---[\s\S]*?(?=---[^-]|$)/gi, '');
+    cleaned = cleaned.replace(/---[\s\S]*?---/gi, ''); // Remove any remaining --- sections
     
-    // Remove common navigation text and noise including CSS patterns
-    const noisePatterns = [
+    // Remove script blocks and any remaining JavaScript code - more aggressive
+    cleaned = cleaned.replace(/<script[\s\S]*?<\/script>/gi, '');
+    cleaned = cleaned.replace(/\bvar\s+\w+[\s\S]*?;/gi, ''); // Remove var declarations
+    cleaned = cleaned.replace(/\bfunction\s+\w+[\s\S]*?\}/gi, ''); // Remove function definitions
+    cleaned = cleaned.replace(/\$\([^)]*\)[\s\S]*?;/gi, ''); // Remove jQuery calls
+    cleaned = cleaned.replace(/document\.[^;]*;?/gi, ''); // Remove document calls
+    cleaned = cleaned.replace(/window\.[^;]*;?/gi, ''); // Remove window calls
+    
+    // Remove JavaScript patterns more selectively
+    cleaned = cleaned.replace(/\bvar\s+\w+\s*=\s*[^;]*;?/gi, ''); // Variable assignments starting with var
+    cleaned = cleaned.replace(/for\s*\([^)]*\)[^}]*\}/gi, ''); // for loops
+    cleaned = cleaned.replace(/if\s*\([^)]*\)[^}]*\}/gi, ''); // if statements
+    cleaned = cleaned.replace(/\w+\.\w+\([^)]*\)/gi, ''); // Object method calls like document.getElementById
+    
+    // Remove only code-like parentheses, not natural language ones
+    cleaned = cleaned.replace(/\b\w+\([^)]*\)/gi, ''); // Function calls only
+    
+    // Remove CSS rules and properties more aggressively
+    cleaned = cleaned.replace(/\.[\w-]+\s*\{[^}]*\}/g, ''); // CSS class rules
+    cleaned = cleaned.replace(/#[\w-]+\s*\{[^}]*\}/g, ''); // CSS ID rules
+    cleaned = cleaned.replace(/[\w-]+:\s*[^;{]+[;}]/gi, ''); // CSS properties
+    
+    // Remove API keys and security tokens
+    cleaned = cleaned.replace(/\b[A-Za-z0-9]{20,}\b/g, ''); // Long alphanumeric strings (likely tokens/keys)
+    cleaned = cleaned.replace(/AIzaSy[A-Za-z0-9_-]{33}/g, ''); // Google API keys specifically
+    cleaned = cleaned.replace(/SYNCHRONIZER_TOKEN[_\w]*\s*=\s*['""][^'"]*['""];?/gi, '');
+    
+    // Remove developer/technical noise more comprehensively
+    const technicalPatterns = [
+      // Remove common developer patterns
+      /MM_\w+\([^)]*\)/gi, // Legacy browser functions
+      /\bretries?:\s*\d+/gi,
+      /\btimeout:\s*\d+/gi,
+      /\bsetInterval\([^)]*\)/gi,
+      /\bsetTimeout\([^)]*\)/gi,
+      /\bclearInterval\([^)]*\)/gi,
+      /\bclearTimeout\([^)]*\)/gi,
+      
+      // Remove regex and technical strings
+      /new\s+RegExp\([^)]*\)/gi,
+      /\.replace\([^)]*\)/gi,
+      /\.match\([^)]*\)/gi,
+      /\.test\([^)]*\)/gi,
+      /\\[nrtbfv\\'"]/gi, // Escape sequences
+      
+      // Remove URLs and technical identifiers
+      /https?:\/\/[^\s)]+/gi,
+      /\b\w+\.\w+\.\w+[\w.]*\b/gi, // Domain-like patterns
+      /\b[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\b/gi, // UUIDs
+      
+      // Remove form field patterns
+      /input\s+type\s*=\s*['"]\w+['"]/gi,
+      /name\s*=\s*['"]\w+['"]/gi,
+      /value\s*=\s*['""][^'"]*['"]/gi,
+      
+      // Common web noise
       /skip to (main )?content/gi,
       /click to expand/gi,
       /read more/gi,
@@ -814,26 +922,43 @@ class ExternalScrapingService {
       /subscribe to newsletter/gi,
       /share on \w+/gi,
       /follow us on/gi,
-      // CSS-related patterns
-      /\.[\w-]+\s*\{[^}]*\}/g, // CSS rules
-      /font-family:\s*[^;]+;?/gi,
-      /font-size:\s*[^;]+;?/gi,
-      /background-color:\s*[^;]+;?/gi,
-      /border[^:]*:\s*[^;]+;?/gi,
-      /margin[^:]*:\s*[^;]+;?/gi,
-      /padding[^:]*:\s*[^;]+;?/gi,
-      /osano-cm-[\w-]+/gi, // Osano cookie consent CSS classes
+      /newsletter signup/gi,
+      /character\(s\)\s+over\s+limit/gi,
+      /characters?\s+left/gi,
+      /remaining\s+characters/gi,
+      
+      // Remove Osano and tracking related content
+      /osano-cm-[\w-]+/gi,
       /webkit-[\w-]+/gi,
-      /transition[^:]*:\s*[^;]+;?/gi
+      /mouseflow[_\w]*/gi,
+      /issuuembed[_\w]*/gi,
+      /googleGeocodeKey/gi,
+      /JSESSIONID/gi,
+      /NOIBUJS/gi
     ];
     
-    noisePatterns.forEach(pattern => {
+    technicalPatterns.forEach(pattern => {
       cleaned = cleaned.replace(pattern, '');
     });
     
-    // Remove email addresses and URLs that might be leftover
+    // Remove email addresses and any remaining URLs
     cleaned = cleaned.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '');
-    cleaned = cleaned.replace(/https?:\/\/[^\s]+/gi, '');
+    
+    // Normalize whitespace and remove empty lines
+    cleaned = cleaned.replace(/\s+/g, ' ');
+    cleaned = cleaned.replace(/\n\s*\n/g, '\n');
+    cleaned = cleaned.replace(/\s+\n/g, '\n');
+    cleaned = cleaned.replace(/\n\s+/g, '\n');
+    
+    // Remove lines that are mostly punctuation or symbols
+    cleaned = cleaned.split('\n')
+      .filter(line => {
+        const trimmed = line.trim();
+        if (trimmed.length < 3) return false;
+        const alphaChars = (trimmed.match(/[a-zA-Z]/g) || []).length;
+        return alphaChars / trimmed.length > 0.3; // At least 30% alphabetic characters
+      })
+      .join('\n');
     
     // Final cleanup
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
