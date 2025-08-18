@@ -421,7 +421,7 @@ class FileProcessingService {
   /**
    * Store original file in S3 for reference (following correct bucket structure)
    * @param {Object} file - Original file
-   * @param {string} fileId - Unique file ID
+   * @param {string} fileId - Unique file ID (for backwards compatibility and deduplication)
    * @returns {Promise<string>} - S3 key of stored file
    */
   async storeOriginalFile(file, fileId) {
@@ -439,7 +439,29 @@ class FileProcessingService {
         fileTypeFolder = 'others'; // For txt, md, csv, xlsx, etc.
       }
       
-      const key = `raw-content/documents/${fileTypeFolder}/${fileId}${ext}`;
+      // Create meaningful filename based on original name
+      const baseFileName = this.sanitizeFileName(path.basename(file.originalname, ext));
+      const sanitizedFileName = `${baseFileName}${ext}`;
+      
+      // Check if file with same name already exists to avoid conflicts
+      let finalFileName = sanitizedFileName;
+      let counter = 1;
+      
+      // Keep trying with incremented counter if filename conflicts exist
+      while (await this.checkFileExists(`raw-content/documents/${fileTypeFolder}/${finalFileName}`)) {
+        const baseName = path.basename(sanitizedFileName, ext);
+        finalFileName = `${baseName}_${counter}${ext}`;
+        counter++;
+        
+        // Safety limit to avoid infinite loops
+        if (counter > 100) {
+          logger.warn(`Too many filename conflicts for ${file.originalname}, using fileId fallback`);
+          finalFileName = `${fileId}${ext}`;
+          break;
+        }
+      }
+      
+      const key = `raw-content/documents/${fileTypeFolder}/${finalFileName}`;
       
       const command = new PutObjectCommand({
         Bucket: this.bucket,
@@ -449,20 +471,45 @@ class FileProcessingService {
         Metadata: {
           originalName: file.originalname,
           fileId: fileId,
+          sanitizedName: finalFileName,
           uploadedAt: timestamp,
           fileSize: String(file.size),
           fileType: fileTypeFolder
         },
         // Add tags for organization
-        Tagging: `FileType=original&Extension=${ext.substring(1)}&FileId=${fileId}&Category=${fileTypeFolder}`
+        Tagging: `FileType=original&Extension=${ext.substring(1)}&FileId=${fileId}&Category=${fileTypeFolder}&OriginalName=${encodeURIComponent(file.originalname)}`
       });
 
       await this.s3Client.send(command);
-      logger.debug(`Original file stored: ${key}`);
+      logger.debug(`Original file stored: ${key} (original: ${file.originalname})`);
       return key;
     } catch (error) {
       logger.error('Failed to store original file:', error);
       throw new Error(`Failed to store original file: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if a file exists in S3
+   * @param {string} key - S3 key to check
+   * @returns {Promise<boolean>} - True if file exists
+   */
+  async checkFileExists(key) {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key
+      });
+      
+      await this.s3Client.send(command);
+      return true;
+    } catch (error) {
+      if (error.name === 'NoSuchKey' || error.statusCode === 404) {
+        return false;
+      }
+      // For other errors, log but assume file doesn't exist to be safe
+      logger.warn(`Error checking file existence for ${key}:`, error.message);
+      return false;
     }
   }
 

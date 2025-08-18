@@ -86,61 +86,7 @@ class BedrockService {
       jitterFactor: 0.1 // Add 10% random jitter
     };
     
-    // Enhanced prompting templates and configurations
-    this.promptTemplates = {
-      systemInstructions: {
-        general: `You are an advanced AI assistant with access to a comprehensive knowledge base. Your goal is to provide detailed, accurate, and helpful responses.
 
-RESPONSE GUIDELINES:
-- Provide comprehensive and well-structured answers
-- Include relevant details, examples, and context when available
-- Use clear formatting with bullet points, numbered lists, or sections when appropriate
-- Cite specific sources or references when available
-- If information is not available in the knowledge base, clearly state this limitation
-- Be conversational but professional in tone
-- Break down complex topics into digestible sections
-- Provide actionable insights when relevant
-
-RESPONSE STRUCTURE:
-1. Start with a direct answer to the main question
-2. Provide detailed explanation with supporting information
-3. Include relevant examples or use cases when applicable
-4. Mention any important considerations or limitations
-5. Suggest related topics or next steps when helpful`,
-
-        technical: `You are a technical expert AI assistant with access to specialized documentation and knowledge. Focus on providing detailed, accurate technical information.
-
-TECHNICAL RESPONSE GUIDELINES:
-- Provide step-by-step instructions when applicable
-- Include code examples, configurations, or technical specifications
-- Explain technical concepts clearly for different skill levels
-- Mention prerequisites, dependencies, or requirements
-- Include troubleshooting tips or common pitfalls
-- Reference specific documentation or best practices
-- Use proper technical terminology while ensuring clarity
-- Provide alternative approaches when relevant`,
-
-        business: `You are a business-focused AI assistant with access to industry knowledge and best practices. Provide strategic and actionable business insights.
-
-BUSINESS RESPONSE GUIDELINES:
-- Focus on practical applications and business value
-- Include market context and industry trends when relevant
-- Provide strategic recommendations with clear rationale
-- Mention potential risks, benefits, and considerations
-- Include implementation timelines or resource requirements
-- Reference industry standards or benchmarks
-- Suggest metrics or KPIs for measuring success
-- Consider different business scenarios or use cases`
-      },
-      
-      enhancementPrompts: {
-        elaboration: "Please provide a comprehensive and detailed response that includes:",
-        structure: "Organize your response with clear sections and formatting:",
-        context: "Consider the broader context and provide relevant background information:",
-        examples: "Include specific examples, use cases, or practical applications:",
-        actionable: "Make your response actionable with specific steps or recommendations:"
-      }
-    };
     
     // Available foundation models
     this.availableModels = {
@@ -333,74 +279,15 @@ BUSINESS RESPONSE GUIDELINES:
   }
 
   /**
-   * Enhance query with detailed instructions for better responses
+   * Simple query enhancement (simplified version)
    * @param {string} originalQuery - Original user query
-   * @param {Object} options - Enhancement options
-   * @returns {string} - Enhanced query with instructions
+   * @param {Object} options - Enhancement options (unused in simplified version)
+   * @returns {string} - The original query (no complex enhancement)
    */
   enhanceQuery(originalQuery, options = {}) {
-    const {
-      responseType = 'auto', // auto, general, technical, business
-      includeExamples = true,
-      requestElaboration = true,
-      structureResponse = true
-    } = options;
-    
-    // Determine response type
-    const template = responseType === 'auto' 
-      ? this.analyzeQueryIntent(originalQuery)
-      : responseType;
-    
-    const systemInstructions = this.promptTemplates.systemInstructions[template] || 
-                              this.promptTemplates.systemInstructions.general;
-    
-    // Build enhancement instructions
-    let enhancementInstructions = [];
-    
-    if (requestElaboration) {
-      enhancementInstructions.push(this.promptTemplates.enhancementPrompts.elaboration);
-      enhancementInstructions.push("- In-depth analysis of the topic");
-      enhancementInstructions.push("- Relevant background information and context");
-      enhancementInstructions.push("- Multiple perspectives or approaches when applicable");
-    }
-    
-    if (structureResponse) {
-      enhancementInstructions.push(this.promptTemplates.enhancementPrompts.structure);
-      enhancementInstructions.push("- Clear headings and sections");
-      enhancementInstructions.push("- Bullet points or numbered lists for key information");
-      enhancementInstructions.push("- Logical flow from overview to details");
-    }
-    
-    if (includeExamples) {
-      enhancementInstructions.push(this.promptTemplates.enhancementPrompts.examples);
-      enhancementInstructions.push("- Real-world scenarios or case studies");
-      enhancementInstructions.push("- Specific implementation details");
-      enhancementInstructions.push("- Code snippets or configuration examples (if technical)");
-    }
-    
-    // Add actionable elements
-    enhancementInstructions.push(this.promptTemplates.enhancementPrompts.actionable);
-    enhancementInstructions.push("- Next steps or recommendations");
-    enhancementInstructions.push("- Best practices or important considerations");
-    enhancementInstructions.push("- Resources for further learning");
-    
-    // Construct the enhanced query
-    const enhancedQuery = `${systemInstructions}
-
-USER QUERY: "${originalQuery}"
-
-${enhancementInstructions.join('\n')}
-
-Please provide a comprehensive response that addresses all aspects of the query while following the guidelines above.`;
-    
-    logger.debug('Enhanced query:', {
-      originalLength: originalQuery.length,
-      enhancedLength: enhancedQuery.length,
-      template: template,
-      options: options
-    });
-    
-    return enhancedQuery;
+    // Simplified version - just return the original query
+    // Complex prompt management has been removed
+    return originalQuery;
   }
 
   /**
@@ -410,60 +297,9 @@ Please provide a comprehensive response that addresses all aspects of the query 
    * @returns {string} - Enhanced query optimized for RAG
    */
   createEnhancedRAGQuery(originalQuery, options = {}) {
-    const {
-      responseType = 'auto',
-      includeExamples = true,
-      requestElaboration = true,
-      structureResponse = true,
-      includeContext = true
-    } = options;
-    
-    // Determine the intent/domain of the query
-    const intent = this.analyzeQueryIntent(originalQuery);
-    
-    // Build context-specific instructions that work well with RAG
-    let instructions = [];
-    
-    // Add domain-specific context
-    if (intent === 'technical') {
-      instructions.push("Focus on technical details, implementation steps, and best practices.");
-      if (includeExamples) {
-        instructions.push("Include code examples, configurations, or technical specifications when available.");
-      }
-    } else if (intent === 'business') {
-      instructions.push("Provide business-focused insights with strategic recommendations.");
-      if (includeExamples) {
-        instructions.push("Include business cases, ROI considerations, and implementation strategies.");
-      }
-    } else {
-      instructions.push("Provide comprehensive information with practical insights.");
-      if (includeExamples) {
-        instructions.push("Include relevant examples and real-world applications.");
-      }
-    }
-    
-    // Add response structure instructions
-    if (structureResponse) {
-      instructions.push("Structure your response with clear sections and organized information.");
-    }
-    
-    if (requestElaboration) {
-      instructions.push("Provide detailed explanations with supporting context and background information.");
-    }
-    
-    if (includeContext) {
-      instructions.push("Include relevant context, considerations, and related topics that would be helpful.");
-    }
-    
-    // Add actionable elements
-    instructions.push("Include actionable recommendations, next steps, or best practices when applicable.");
-    
-    // Construct the enhanced query for RAG
-    const enhancedQuery = `${originalQuery}
-
-Please provide a comprehensive and detailed response that: ${instructions.join(' ')} Make sure to cite relevant sources and provide specific details from the knowledge base.`;
-    
-    return enhancedQuery;
+    // Simplified version - just return the original query
+    // Complex prompt management has been removed
+    return originalQuery;
   }
 
   /**
@@ -473,102 +309,15 @@ Please provide a comprehensive and detailed response that: ${instructions.join('
    * @returns {string} - Enhanced response
    */
   postProcessResponse(response, options = {}) {
+    // Simplified version - just return the response as is
+    // Complex post-processing has been removed
     if (!response || typeof response !== 'string') {
       return response;
     }
-    
-    let enhanced = response;
-    
-    // Add proper formatting and structure
-    if (options.structureResponse !== false) {
-      enhanced = this.improveResponseStructure(enhanced);
-    }
-    
-    // Add emphasis to important points
-    if (options.emphasizeKey !== false) {
-      enhanced = this.emphasizeKeyPoints(enhanced);
-    }
-    
-    // Ensure proper conclusion
-    if (options.addConclusion !== false) {
-      enhanced = this.ensureConclusion(enhanced);
-    }
-    
-    return enhanced.trim();
+    return response.trim();
   }
 
-  /**
-   * Improve response structure with better formatting
-   * @param {string} response - Raw response
-   * @returns {string} - Structured response
-   */
-  improveResponseStructure(response) {
-    let structured = response;
-    
-    // Ensure proper spacing around sections
-    structured = structured.replace(/([.!?])\s*([A-Z][^.!?]*:)/g, '$1\n\n**$2**');
-    
-    // Format numbered lists properly
-    structured = structured.replace(/(\d+\.)\s*([A-Z])/g, '\n$1 **$2');
-    structured = structured.replace(/\*\*([^*]+)\*\*([^*\n]+)/g, '**$1**$2**');
-    
-    // Ensure bullet points are properly formatted
-    structured = structured.replace(/(?:^|\n)[\s]*[-•]\s*/gm, '\n• ');
-    
-    // Add spacing around paragraphs
-    structured = structured.replace(/([.!?])\s*([A-Z][a-z])/g, '$1\n\n$2');
-    
-    return structured;
-  }
 
-  /**
-   * Emphasize key points in the response
-   * @param {string} response - Response text
-   * @returns {string} - Response with emphasized key points
-   */
-  emphasizeKeyPoints(response) {
-    let emphasized = response;
-    
-    // Emphasize important phrases
-    const keyPhrases = [
-      /\b(important|crucial|essential|critical|key|vital|significant)\b/gi,
-      /\b(note that|remember|keep in mind|be aware)\b/gi,
-      /\b(best practice|recommended|should|must)\b/gi
-    ];
-    
-    keyPhrases.forEach(pattern => {
-      emphasized = emphasized.replace(pattern, '**$&**');
-    });
-    
-    return emphasized;
-  }
-
-  /**
-   * Ensure response has a proper conclusion if needed
-   * @param {string} response - Response text
-   * @returns {string} - Response with conclusion
-   */
-  ensureConclusion(response) {
-    // Check if response already has a conclusion
-    const conclusionIndicators = [
-      'in conclusion', 'to summarize', 'in summary', 'overall',
-      'to conclude', 'finally', 'in the end', 'key takeaways'
-    ];
-    
-    const hasConclusion = conclusionIndicators.some(indicator => 
-      response.toLowerCase().includes(indicator)
-    );
-    
-    // If it's a long response without conclusion, suggest next steps
-    if (!hasConclusion && response.length > 500) {
-      const sentences = response.split(/[.!?]+/).filter(s => s.trim().length > 0);
-      if (sentences.length > 3) {
-        return response + '\n\n**Next Steps**: Consider exploring related topics or implementing the suggestions above based on your specific requirements.';
-      }
-    }
-    
-    return response;
-  }
 
   /**
    * Validate and get model ID

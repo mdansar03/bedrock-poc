@@ -1,6 +1,6 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, Database, MessageCircle, FolderOpen } from 'lucide-react'
+import { Home, Database, MessageCircle, FolderOpen, Settings } from 'lucide-react'
 
 const Navigation = () => {
   const location = useLocation()
@@ -8,6 +8,7 @@ const Navigation = () => {
   const navItems = [
     { path: '/', name: 'Home', icon: Home },
     { path: '/knowledge', name: 'Knowledge Base', icon: Database },
+    { path: '/action-groups', name: 'Action Groups', icon: Settings },
     { path: '/data', name: 'Data Viewer', icon: FolderOpen },
     { path: '/chat', name: 'AI Chat', icon: MessageCircle },
   ]

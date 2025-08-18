@@ -1,0 +1,294 @@
+{
+  "OTMXCJ2RI6": {
+    "apiConfig": {
+      "apiName": "cooking details receipe",
+      "description": "cooking details cooking API",
+      "baseUrl": "https://dummyjson.com",
+      "endpoints": [
+        {
+          "path": "/recipes/search",
+          "method": "GET",
+          "description": "receipe by search",
+          "parameters": [
+            {
+              "name": "q",
+              "type": "string",
+              "location": "query",
+              "required": true,
+              "description": ""
+            }
+          ],
+          "responseExample": "{\n    \"recipes\": [\n        {\n            \"id\": 23,\n            \"name\": \"Italian Tiramisu\",\n            \"ingredients\": [\n                \"Espresso, brewed and cooled\",\n                \"Cocoa powder\"\n            ],\n            \"instructions\": [\n                \"In a bowl, whip heavy cream until stiff peaks form.\",\n                \"Indulge in the decadence of this classic Italian Tiramisu!\"\n            ],\n            \"prepTimeMinutes\": 30,\n            \"cookTimeMinutes\": 0,\n            \"servings\": 6,\n            \"difficulty\": \"Medium\",\n            \"cuisine\": \"Italian\",\n            \"caloriesPerServing\": 350,\n            \"tags\": [\n                \"Tiramisu\",\n                \"Italian\"\n            ],\n            \"userId\": 130,\n            \"image\": \"https://cdn.dummyjson.com/recipe-images/23.webp\",\n            \"rating\": 4.6,\n            \"reviewCount\": 0,\n            \"mealType\": [\n                \"Dessert\"\n            ]\n        },\n        {\n            \"id\": 45,\n            \"name\": \"Italian Margherita Pizza\",\n            \"ingredients\": [\n                \"Pizza dough\",\n                \"Salt and pepper to taste\"\n            ],\n            \"instructions\": [\n                \"Preheat the oven to the highest temperature your oven can go.\",\n                \"Top with fresh basil leaves and season with salt and pepper. Slice and serve this classic Margherita Pizza.\"\n            ],\n            \"prepTimeMinutes\": 20,\n            \"cookTimeMinutes\": 12,\n            \"servings\": 4,\n            \"difficulty\": \"Easy\",\n            \"cuisine\": \"Italian\",\n            \"caloriesPerServing\": 280,\n            \"tags\": [\n                \"Margherita pizza\",\n                \"Italian\",\n                \"Quick\"\n            ],\n            \"userId\": 160,\n            \"image\": \"https://cdn.dummyjson.com/recipe-images/45.webp\",\n            \"rating\": 4.7,\n            \"reviewCount\": 98,\n            \"mealType\": [\n                \"Dinner\"\n            ]\n        }\n    ],\n    \"total\": 2,\n    \"skip\": 0,\n    \"limit\": 2\n}"
+        }
+      ],
+      "authentication": {
+        "type": "none",
+        "location": "header",
+        "name": "",
+        "value": ""
+      }
+    },
+    "openApiSchema": {
+      "openapi": "3.0.0",
+      "info": {
+        "title": "cooking details receipe",
+        "description": "cooking details cooking API",
+        "version": "1.0.0",
+        "x-generated-by": "Oralia AI Action Group Generator",
+        "x-generated-at": "2025-08-14T10:46:43.651Z"
+      },
+      "servers": [
+        {
+          "url": "https://dummyjson.com",
+          "description": "API Server"
+        }
+      ],
+      "paths": {
+        "/recipes/search": {
+          "get": {
+            "summary": "receipe by search",
+            "description": "receipe by search",
+            "operationId": "getRecipesSearch",
+            "tags": [
+              "cooking details receipe"
+            ],
+            "parameters": [
+              {
+                "name": "q",
+                "in": "query",
+                "required": true,
+                "description": "q parameter",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "Success",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "recipes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "integer",
+                                "example": 23
+                              },
+                              "name": {
+                                "type": "string",
+                                "example": "Italian Tiramisu"
+                              },
+                              "ingredients": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "example": "Espresso, brewed and cooled"
+                                }
+                              },
+                              "instructions": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "example": "In a bowl, whip heavy cream until stiff peaks form."
+                                }
+                              },
+                              "prepTimeMinutes": {
+                                "type": "integer",
+                                "example": 30
+                              },
+                              "cookTimeMinutes": {
+                                "type": "integer",
+                                "example": 0
+                              },
+                              "servings": {
+                                "type": "integer",
+                                "example": 6
+                              },
+                              "difficulty": {
+                                "type": "string",
+                                "example": "Medium"
+                              },
+                              "cuisine": {
+                                "type": "string",
+                                "example": "Italian"
+                              },
+                              "caloriesPerServing": {
+                                "type": "integer",
+                                "example": 350
+                              },
+                              "tags": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "example": "Tiramisu"
+                                }
+                              },
+                              "userId": {
+                                "type": "integer",
+                                "example": 130
+                              },
+                              "image": {
+                                "type": "string",
+                                "example": "https://cdn.dummyjson.com/recipe-images/23.webp"
+                              },
+                              "rating": {
+                                "type": "number",
+                                "example": 4.6
+                              },
+                              "reviewCount": {
+                                "type": "integer",
+                                "example": 0
+                              },
+                              "mealType": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "example": "Dessert"
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "ingredients",
+                              "instructions",
+                              "prepTimeMinutes",
+                              "cookTimeMinutes",
+                              "servings",
+                              "difficulty",
+                              "cuisine",
+                              "caloriesPerServing",
+                              "tags",
+                              "userId",
+                              "image",
+                              "rating",
+                              "reviewCount",
+                              "mealType"
+                            ]
+                          }
+                        },
+                        "total": {
+                          "type": "integer",
+                          "example": 2
+                        },
+                        "skip": {
+                          "type": "integer",
+                          "example": 0
+                        },
+                        "limit": {
+                          "type": "integer",
+                          "example": 2
+                        }
+                      },
+                      "required": [
+                        "recipes",
+                        "total",
+                        "skip",
+                        "limit"
+                      ]
+                    }
+                  }
+                }
+              },
+              "400": {
+                "description": "Bad Request",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  }
+                }
+              },
+              "401": {
+                "description": "Unauthorized",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  }
+                }
+              },
+              "404": {
+                "description": "Not Found",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  }
+                }
+              },
+              "500": {
+                "description": "Internal Server Error",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "components": {
+        "schemas": {
+          "Error": {
+            "type": "object",
+            "required": [
+              "error",
+              "message"
+            ],
+            "properties": {
+              "error": {
+                "type": "string",
+                "description": "Error type"
+              },
+              "message": {
+                "type": "string",
+                "description": "Error message"
+              },
+              "details": {
+                "type": "object",
+                "description": "Additional error details"
+              }
+            }
+          },
+          "Success": {
+            "type": "object",
+            "required": [
+              "success",
+              "data"
+            ],
+            "properties": {
+              "success": {
+                "type": "boolean",
+                "example": true
+              },
+              "data": {
+                "type": "object",
+                "description": "Response data"
+              },
+              "message": {
+                "type": "string",
+                "description": "Success message"
+              }
+            }
+          }
+        },
+        "securitySchemes": {}
+      }
+    },
+    "lambdaArn": "arn:aws:lambda:us-east-1:288704464456:function:oralia-action-group-cooking_details_receipe",
+    "description": "cooking details cooking API"
+  }
+}

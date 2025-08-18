@@ -408,18 +408,34 @@ router.post('/query', [
 
         response = {
           answer: agentResponse.answer,
-          sources: agentResponse.citations.map(citation => ({
-            content: citation.generatedResponsePart?.textResponsePart?.text || '',
-            metadata: citation.retrievedReferences || []
-          })),
+          sources: (agentResponse.citations || []).map(citation => {
+            // Handle different citation formats
+            if (citation.retrievedReferences) {
+              // Standard citation format
+              return {
+                content: citation.generatedResponsePart?.textResponsePart?.text || '',
+                metadata: citation.retrievedReferences || [],
+                documentId: citation.retrievedReferences?.[0]?.location?.s3Location?.uri || '',
+                relevanceScore: citation.retrievedReferences?.[0]?.metadata?.score || 0
+              };
+            } else {
+              // Fallback format
+              return {
+                content: citation.content || citation.text || '',
+                metadata: citation.metadata || {},
+                documentId: citation.documentId || '',
+                relevanceScore: citation.score || 0
+              };
+            }
+          }),
           sessionId: agentResponse.sessionId,
-          model: agentResponse.metadata.agentId,
+          model: agentResponse.metadata?.agentId || 'agent',
           agentMetadata: {
             analysis: agentResponse.analysis,
             session: agentResponse.session,
-            agentId: agentResponse.metadata.agentId,
-            responseTime: agentResponse.metadata.responseTime,
-            tokensUsed: agentResponse.metadata.tokensUsed
+            agentId: agentResponse.metadata?.agentId,
+            responseTime: agentResponse.metadata?.responseTime,
+            tokensUsed: agentResponse.metadata?.tokensUsed
           },
           method: 'agent'
         };

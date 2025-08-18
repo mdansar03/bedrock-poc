@@ -178,6 +178,62 @@ const options = {
               type: 'string',
               example: 'agent-session-123'
             },
+            dataSources: {
+              type: 'object',
+              description: 'Optional data source filtering to restrict search to specific sources',
+              properties: {
+                websites: {
+                  type: 'array',
+                  items: {
+                    type: 'string'
+                  },
+                  description: 'Array of website domains to include in search',
+                  example: ['docs.example.com', 'api.example.com']
+                },
+                pdfs: {
+                  type: 'array',
+                  items: {
+                    type: 'string'
+                  },
+                  description: 'Array of PDF file names to include in search',
+                  example: ['user-manual', 'api-guide']
+                },
+                documents: {
+                  type: 'array',
+                  items: {
+                    type: 'string'
+                  },
+                  description: 'Array of document file names to include in search',
+                  example: ['technical-specs', 'requirements-doc']
+                }
+              }
+            },
+            model: {
+              type: 'string',
+              description: 'Foundation model to use for inference',
+              example: 'anthropic.claude-3-sonnet-20240229-v1:0'
+            },
+            temperature: {
+              type: 'number',
+              minimum: 0.0,
+              maximum: 1.0,
+              description: 'Controls randomness in response generation (0.0 = deterministic, 1.0 = very random)',
+              example: 0.7
+            },
+            topP: {
+              type: 'number',
+              minimum: 0.0,
+              maximum: 1.0,
+              description: 'Controls nucleus sampling probability (percentage of probability distribution to consider)',
+              example: 0.9
+            },
+            systemPrompt: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 4000,
+              description: 'Custom system prompt to provide context and instructions to the agent',
+              example: 'You are a technical documentation expert. Provide detailed, structured responses with examples.'
+            },
             options: {
               type: 'object',
               properties: {
@@ -371,6 +427,10 @@ const options = {
       {
         name: 'Data Management',
         description: 'Knowledge base data management and domain operations'
+      },
+      {
+        name: 'Action Groups',
+        description: 'Automated Action Group creation and management for AWS Bedrock Agents'
       }
     ]
   },

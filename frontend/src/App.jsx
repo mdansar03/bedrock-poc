@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Navigation from './components/Navigation'
 import HomePage from './pages/HomePage'
 import KnowledgePage from './pages/KnowledgePage'
+import ActionGroupPage from './pages/ActionGroupPage'
 import DataViewerPage from './pages/DataViewerPage'
 import ChatPage from './pages/ChatPage'
 
@@ -15,6 +16,7 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/knowledge" element={<KnowledgePage />} />
+            <Route path="/action-groups" element={<ActionGroupPage />} />
             <Route path="/data" element={<DataViewerPage />} />
             <Route path="/chat" element={<ChatPage />} />
           </Routes>

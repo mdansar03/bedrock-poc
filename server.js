@@ -8,9 +8,11 @@ const logger = require('./src/utils/logger');
 const scrapingRoutes = require('./src/routes/scraping');
 const chatRoutes = require('./src/routes/chat');
 const agentRoutes = require('./src/routes/agent');
+const agentInstructionsRoutes = require('./src/routes/agent-instructions');
 const filesRoutes = require('./src/routes/files');
 const healthRoutes = require('./src/routes/health');
 const dataManagementRoutes = require('./src/routes/dataManagement');
+const actionGroupRoutes = require('./src/routes/actionGroups');
 
 // Swagger configuration
 const { specs, swaggerUi, swaggerUiOptions } = require('./src/config/swagger');
@@ -92,6 +94,8 @@ app.use('/api/scraping', scrapingRoutes);
 app.use('/api/files', filesRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/chat/agent', agentRoutes);
+app.use('/api/agent-instructions', agentInstructionsRoutes);
+app.use('/api/action-groups', actionGroupRoutes);
 app.use('/api/data-management', dataManagementRoutes);
 
 // Error handling middleware

@@ -182,11 +182,14 @@ export const chatAPI = {
 
 // New Agent API functions
 export const agentAPI = {
-  // Send message to Bedrock Agent
-  sendMessage: async (message, sessionId = null, options = {}) => {
+  // Send message to Bedrock Agent with optional data source filtering
+  sendMessage: async (message, sessionId = null, options = {}, dataSources = null) => {
     const payload = { message };
     if (sessionId) {
       payload.sessionId = sessionId;
+    }
+    if (dataSources) {
+      payload.dataSources = dataSources;
     }
     if (Object.keys(options).length > 0) {
       payload.options = options;
@@ -246,6 +249,24 @@ export const agentAPI = {
   // Get environment configuration
   getConfig: async () => {
     const response = await api.get('/chat/agent/config');
+    return response.data;
+  },
+
+  // Agent Instructions Management (Simplified)
+  getCurrentInstructions: async () => {
+    const response = await api.get('/agent-instructions/current');
+    return response.data;
+  },
+
+  updateToDefaultInstructions: async () => {
+    const response = await api.post('/agent-instructions/update-default');
+    return response.data;
+  },
+
+  updateToCustomInstructions: async (instructions) => {
+    const response = await api.post('/agent-instructions/update-custom', {
+      instructions
+    });
     return response.data;
   }
 };
@@ -354,6 +375,104 @@ export const dataManagementAPI = {
   // Get deletion preview for URL
   getUrlDeletionPreview: async (url) => {
     const response = await api.get(`/data-management/urls/deletion-preview?url=${encodeURIComponent(url)}`);
+    return response.data;
+  },
+
+  // Get available data sources for filtering
+  getAvailableDataSources: async () => {
+    const response = await api.get('/data-management/domains');
+    return response.data;
+  }
+};
+
+// Action Group API functions
+export const actionGroupAPI = {
+  // Create a new action group
+  createActionGroup: async (apiConfig) => {
+    const response = await api.post('/action-groups/create', apiConfig);
+    return response.data;
+  },
+
+  // List all action groups
+  listActionGroups: async (agentId = null) => {
+    const endpoint = agentId ? `/action-groups?agentId=${agentId}` : '/action-groups';
+    const response = await api.get(endpoint);
+    return response.data;
+  },
+
+  // Get action group details
+  getActionGroup: async (actionGroupId) => {
+    const response = await api.get(`/action-groups/${actionGroupId}`);
+    return response.data;
+  },
+
+  // Get action group with editable configuration
+  getActionGroupConfig: async (actionGroupId) => {
+    const response = await api.get(`/action-groups/${actionGroupId}/config`);
+    return response.data;
+  },
+
+  // Update action group
+  updateActionGroup: async (actionGroupId, updates) => {
+    const response = await api.put(`/action-groups/${actionGroupId}`, updates);
+    return response.data;
+  },
+
+  // Delete action group
+  deleteActionGroup: async (actionGroupId) => {
+    const response = await api.delete(`/action-groups/${actionGroupId}`);
+    return response.data;
+  },
+
+  // Test action group
+  testActionGroup: async (actionGroupId, testData = {}) => {
+    const response = await api.post(`/action-groups/${actionGroupId}/test`, testData);
+    return response.data;
+  },
+
+  // Generate OpenAPI schema preview
+  previewOpenAPISchema: async (apiConfig) => {
+    const response = await api.post('/action-groups/preview-schema', apiConfig);
+    return response.data;
+  },
+
+  // Get agent information
+  getAgentInfo: async () => {
+    const response = await api.get('/action-groups/agent-info');
+    return response.data;
+  },
+
+  // Validate API configuration
+  validateApiConfig: async (apiConfig) => {
+    const response = await api.post('/action-groups/validate', apiConfig);
+    return response.data;
+  },
+
+  // Get action group execution history
+  getExecutionHistory: async (actionGroupId, limit = 50) => {
+    const response = await api.get(`/action-groups/${actionGroupId}/history?limit=${limit}`);
+    return response.data;
+  },
+
+  // Sync action group with agent
+  syncWithAgent: async (actionGroupId) => {
+    const response = await api.post(`/action-groups/${actionGroupId}/sync`);
+    return response.data;
+  },
+
+  // Enable action group
+  enableActionGroup: async (actionGroupId) => {
+    const response = await api.put(`/action-groups/${actionGroupId}`, {
+      actionGroupState: 'ENABLED'
+    });
+    return response.data;
+  },
+
+  // Disable action group
+  disableActionGroup: async (actionGroupId) => {
+    const response = await api.put(`/action-groups/${actionGroupId}`, {
+      actionGroupState: 'DISABLED'
+    });
     return response.data;
   }
 };

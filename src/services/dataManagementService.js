@@ -527,59 +527,234 @@ class DataManagementService {
   }
 
   /**
-   * Get summary of all domains in the knowledge base
-   * @returns {Promise<Object>} - Summary of all domains
+   * Get comprehensive summary of all domains and data sources
+   * @returns {Promise<Object>} - Complete summary including web content, PDFs, and documents
    */
   async getAllDomainsSummary() {
     try {
-      logger.info('Getting summary of all domains in knowledge base');
+      logger.info('Getting comprehensive summary of all domains and data sources');
 
       const domains = new Map();
+      const dataSources = {
+        websites: new Map(),
+        pdfs: new Map(),
+        documents: new Map()
+      };
 
-      // Scan raw content
+      // 1. Scan raw content from web scrapes
       const rawContentObjects = await this.listS3Objects('raw-content/web-scrapes/');
       rawContentObjects.forEach(obj => {
         const pathParts = obj.Key.split('/');
         if (pathParts.length >= 3) {
           const domain = pathParts[2];
           if (!domains.has(domain)) {
-            domains.set(domain, { rawFiles: 0, processedFiles: 0, documentFiles: 0, totalSize: 0 });
+            domains.set(domain, { 
+              type: 'website',
+              rawFiles: 0, 
+              processedFiles: 0, 
+              documentFiles: 0, 
+              totalSize: 0,
+              lastUpdate: obj.LastModified
+            });
+          }
+          if (!dataSources.websites.has(domain)) {
+            dataSources.websites.set(domain, {
+              domain,
+              type: 'website',
+              files: 0,
+              size: 0,
+              lastUpdate: obj.LastModified
+            });
           }
           domains.get(domain).rawFiles++;
           domains.get(domain).totalSize += obj.Size;
+          dataSources.websites.get(domain).files++;
+          dataSources.websites.get(domain).size += obj.Size;
+          
+          // Update last modified date if newer
+          if (obj.LastModified > domains.get(domain).lastUpdate) {
+            domains.get(domain).lastUpdate = obj.LastModified;
+            dataSources.websites.get(domain).lastUpdate = obj.LastModified;
+          }
         }
       });
 
-      // Scan documents
+      // 2. Scan PDF files
+      const pdfObjects = await this.listS3Objects('raw-content/documents/pdfs/');
+      for (const obj of pdfObjects) {
+        const fileName = obj.Key.split('/').pop();
+        const fileBaseName = fileName.replace(/\.[^/.]+$/, ""); // Remove extension from S3 filename
+        
+        // Try to get file metadata for more information
+        let pdfInfo = {
+          fileName: fileBaseName, // This will be the sanitized S3 filename without extension
+          type: 'pdf',
+          size: obj.Size,
+          lastUpdate: obj.LastModified,
+          originalName: fileName, // S3 filename with extension
+          s3Key: obj.Key
+        };
+
+        if (obj.Metadata) {
+          // Use original name from metadata if available, otherwise use S3 filename
+          pdfInfo.originalName = obj.Metadata.originalName || fileName;
+          pdfInfo.fileId = obj.Metadata.fileId;
+          pdfInfo.sanitizedName = obj.Metadata.sanitizedName || fileName;
+          
+          // For display purposes, use the original filename without extension
+          if (obj.Metadata.originalName) {
+            const originalBase = obj.Metadata.originalName.replace(/\.[^/.]+$/, "");
+            pdfInfo.displayName = originalBase;
+          } else {
+            pdfInfo.displayName = fileBaseName;
+          }
+        } else {
+          pdfInfo.displayName = fileBaseName;
+        }
+
+        // Use displayName as the key for better user experience
+        const mapKey = pdfInfo.displayName || fileBaseName;
+        dataSources.pdfs.set(mapKey, pdfInfo);
+      }
+
+      // 3. Scan other document files (docs, txt, etc.)
+      const docTypes = ['docs', 'others'];
+      for (const docType of docTypes) {
+        const docObjects = await this.listS3Objects(`raw-content/documents/${docType}/`);
+        for (const obj of docObjects) {
+          const fileName = obj.Key.split('/').pop();
+          const fileBaseName = fileName.replace(/\.[^/.]+$/, ""); // Remove extension from S3 filename
+          const fileExtension = fileName.split('.').pop().toLowerCase();
+          
+          let docInfo = {
+            fileName: fileBaseName, // Sanitized S3 filename without extension
+            type: fileExtension,
+            category: docType,
+            size: obj.Size,
+            lastUpdate: obj.LastModified,
+            originalName: fileName, // S3 filename with extension
+            s3Key: obj.Key
+          };
+
+          if (obj.Metadata) {
+            // Use original name from metadata if available
+            docInfo.originalName = obj.Metadata.originalName || fileName;
+            docInfo.fileId = obj.Metadata.fileId;
+            docInfo.sanitizedName = obj.Metadata.sanitizedName || fileName;
+            
+            // For display purposes, use the original filename without extension
+            if (obj.Metadata.originalName) {
+              const originalBase = obj.Metadata.originalName.replace(/\.[^/.]+$/, "");
+              docInfo.displayName = originalBase;
+            } else {
+              docInfo.displayName = fileBaseName;
+            }
+          } else {
+            docInfo.displayName = fileBaseName;
+          }
+
+          // Use displayName as the key for better user experience
+          const mapKey = docInfo.displayName || fileBaseName;
+          dataSources.documents.set(mapKey, docInfo);
+        }
+      }
+
+      // 4. Scan formatted documents (processed content)
       const documentObjects = await this.listS3Objects('documents/');
       for (const obj of documentObjects) {
         if (obj.Metadata && obj.Metadata.domain) {
           const domain = obj.Metadata.domain;
           if (!domains.has(domain)) {
-            domains.set(domain, { rawFiles: 0, processedFiles: 0, documentFiles: 0, totalSize: 0 });
+            domains.set(domain, { 
+              type: 'website',
+              rawFiles: 0, 
+              processedFiles: 0, 
+              documentFiles: 0, 
+              totalSize: 0,
+              lastUpdate: obj.LastModified
+            });
           }
           domains.get(domain).documentFiles++;
           domains.get(domain).totalSize += obj.Size;
+          
+          if (obj.LastModified > domains.get(domain).lastUpdate) {
+            domains.get(domain).lastUpdate = obj.LastModified;
+          }
         }
       }
 
-      // Convert to array and sort by total size
+      // Convert domains to array and sort by total size
       const domainList = Array.from(domains.entries())
         .map(([domain, stats]) => ({
           domain,
           ...stats,
           totalFiles: stats.rawFiles + stats.processedFiles + stats.documentFiles,
-          sizeFormatted: this.formatBytes(stats.totalSize)
+          sizeFormatted: this.formatBytes(stats.totalSize),
+          status: stats.totalFiles > 0 ? 'active' : 'inactive'
         }))
         .sort((a, b) => b.totalSize - a.totalSize);
 
+      // Convert data sources to arrays
+      const websitesList = Array.from(dataSources.websites.values())
+        .map(source => ({
+          ...source,
+          sizeFormatted: this.formatBytes(source.size)
+        }))
+        .sort((a, b) => b.size - a.size);
+
+      const pdfsList = Array.from(dataSources.pdfs.values())
+        .map(source => ({
+          ...source,
+          sizeFormatted: this.formatBytes(source.size)
+        }))
+        .sort((a, b) => b.size - a.size);
+
+      const documentsList = Array.from(dataSources.documents.values())
+        .map(source => ({
+          ...source,
+          sizeFormatted: this.formatBytes(source.size)
+        }))
+        .sort((a, b) => b.size - a.size);
+
+      // Calculate totals
+      const totalWebsites = websitesList.length;
+      const totalPdfs = pdfsList.length;
+      const totalDocuments = documentsList.length;
+      const totalFiles = domainList.reduce((sum, d) => sum + d.totalFiles, 0) + totalPdfs + totalDocuments;
+      const totalSize = domainList.reduce((sum, d) => sum + d.totalSize, 0) + 
+                       pdfsList.reduce((sum, p) => sum + p.size, 0) + 
+                       documentsList.reduce((sum, d) => sum + d.size, 0);
+
       return {
+        // Legacy domains format for backward compatibility
         totalDomains: domainList.length,
         domains: domainList,
+        
+        // Enhanced data sources breakdown
+        dataSources: {
+          websites: {
+            count: totalWebsites,
+            items: websitesList
+          },
+          pdfs: {
+            count: totalPdfs,
+            items: pdfsList
+          },
+          documents: {
+            count: totalDocuments,
+            items: documentsList
+          }
+        },
+        
+        // Overall summary
         summary: {
-          totalFiles: domainList.reduce((sum, d) => sum + d.totalFiles, 0),
-          totalSize: domainList.reduce((sum, d) => sum + d.totalSize, 0),
-          totalSizeFormatted: this.formatBytes(domainList.reduce((sum, d) => sum + d.totalSize, 0))
+          totalDataSources: totalWebsites + totalPdfs + totalDocuments,
+          totalWebsites,
+          totalPdfs,
+          totalDocuments,
+          totalFiles,
+          totalSize,
+          totalSizeFormatted: this.formatBytes(totalSize)
         }
       };
 

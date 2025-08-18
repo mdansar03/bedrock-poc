@@ -10,8 +10,8 @@ const router = express.Router();
  * @swagger
  * /api/chat/agent:
  *   post:
- *     summary: Chat with Bedrock Agent
- *     description: Query the knowledge base using AWS Bedrock Agent for intelligent responses based on stored documents
+ *     summary: Chat with Bedrock Agent with Advanced Configuration
+ *     description: Query the knowledge base using AWS Bedrock Agent for intelligent responses with support for custom inference parameters, system prompts, model selection, and data source filtering
  *     tags: [Agent]
  *     requestBody:
  *       required: true
@@ -29,12 +29,31 @@ const router = express.Router();
  *                   useEnhancement: true
  *                   sessionConfig:
  *                     enableTrace: false
+ *             filteredQuery:
+ *               summary: Query with data source filtering
+ *               value:
+ *                 message: "What does the documentation say about API endpoints?"
+ *                 sessionId: "agent-session-002"
+ *                 dataSources:
+ *                   websites: ["docs.example.com"]
+ *                   pdfs: ["api-manual"]
+ *                   documents: []
+ *                 options:
+ *                   useEnhancement: true
  *             technicalQuery:
  *               summary: Technical documentation query
  *               value:
  *                 message: "How do I configure the API endpoints?"
  *                 options:
  *                   useEnhancement: true
+ *             customizedQuery:
+ *               summary: Query with custom inference parameters
+ *               value:
+ *                 message: "Explain the system architecture in detail"
+ *                 model: "anthropic.claude-3-sonnet-20240229-v1:0"
+ *                 temperature: 0.7
+ *                 topP: 0.9
+ *                 systemPrompt: "You are a technical documentation expert. Provide detailed, structured responses with examples."
  *     responses:
  *       200:
  *         description: Successfully generated agent response
@@ -69,9 +88,28 @@ const router = express.Router();
  *                             type: number
  *                           excerpt:
  *                             type: string
+ *                           dataSourceType:
+ *                             type: string
+ *                             enum: ["website", "pdf", "document"]
  *                     processingTime:
  *                       type: string
  *                       example: "3.2s"
+ *                     appliedFilters:
+ *                       type: object
+ *                       description: "Data source filters that were applied"
+ *                       properties:
+ *                         websites:
+ *                           type: array
+ *                           items:
+ *                             type: string
+ *                         pdfs:
+ *                           type: array
+ *                           items:
+ *                             type: string
+ *                         documents:
+ *                           type: array
+ *                           items:
+ *                             type: string
  *       400:
  *         description: Validation error
  *         content:
@@ -95,6 +133,22 @@ router.post('/', [
     .optional()
     .isString()
     .withMessage('Session ID must be a string'),
+  body('dataSources')
+    .optional()
+    .isObject()
+    .withMessage('Data sources must be an object'),
+  body('dataSources.websites')
+    .optional()
+    .isArray()
+    .withMessage('Websites must be an array of domain names'),
+  body('dataSources.pdfs')
+    .optional()
+    .isArray()
+    .withMessage('PDFs must be an array of file names'),
+  body('dataSources.documents')
+    .optional()
+    .isArray()
+    .withMessage('Documents must be an array of file names'),
   body('options')
     .optional()
     .isObject()
@@ -106,7 +160,24 @@ router.post('/', [
   body('options.sessionConfig')
     .optional()
     .isObject()
-    .withMessage('Session config must be an object')
+    .withMessage('Session config must be an object'),
+  body('model')
+    .optional()
+    .isString()
+    .withMessage('Model must be a string'),
+  body('temperature')
+    .optional()
+    .isFloat({ min: 0.0, max: 1.0 })
+    .withMessage('Temperature must be a number between 0.0 and 1.0'),
+  body('topP')
+    .optional()
+    .isFloat({ min: 0.0, max: 1.0 })
+    .withMessage('Top P must be a number between 0.0 and 1.0'),
+  body('systemPrompt')
+    .optional()
+    .isString()
+    .isLength({ min: 1, max: 4000 })
+    .withMessage('System prompt must be between 1 and 4000 characters')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -122,26 +193,120 @@ router.post('/', [
     const { 
       message, 
       sessionId = null, 
-      options = {} 
+      dataSources = null,
+      options = {},
+      model = null,
+      temperature = null,
+      topP = null,
+      systemPrompt = null
     } = req.body;
 
     logger.info(`Received agent query: ${message.substring(0, 100)}...`);
     if (sessionId) {
       logger.info(`Using session ID: ${sessionId}`);
     }
+    
+    // Log model selection if provided
+    if (model) {
+      logger.info(`Using model: ${model}`);
+    }
+    
+    // Log inference parameters if provided
+    if (temperature !== null || topP !== null) {
+      logger.info('Inference parameters:', {
+        temperature,
+        topP
+      });
+    }
+    
+    // Log system prompt if provided
+    if (systemPrompt) {
+      logger.info(`System prompt provided: ${systemPrompt.substring(0, 100)}...`);
+    }
 
-    // Invoke the Bedrock Agent
-    const response = await bedrockAgentService.invokeAgent(message, sessionId, options);
+    // Log data source filtering if provided
+    if (dataSources) {
+      logger.info('Data source filters applied:', {
+        websites: dataSources.websites?.length || 0,
+        pdfs: dataSources.pdfs?.length || 0,
+        documents: dataSources.documents?.length || 0
+      });
+    }
+
+    // Enhanced options to include data source filtering and inference parameters
+    const enhancedOptions = {
+      ...options,
+      dataSources: dataSources,
+      model: model,
+      temperature: temperature,
+      topP: topP,
+      systemPrompt: systemPrompt
+    };
+
+    // Invoke the Bedrock Agent with enhanced options
+    const response = await bedrockAgentService.invokeAgent(message, sessionId, enhancedOptions);
+
+    // Log response for debugging
+    logger.debug('Agent response structure:', {
+      hasAnswer: !!response.answer,
+      answerLength: response.answer?.length || 0,
+      citationCount: response.citations?.length || 0,
+      sessionId: response.sessionId,
+      metadataKeys: Object.keys(response.metadata || {}),
+      filtersApplied: !!dataSources
+    });
+
+    // Map citations to sources format for consistency with enhanced data source info
+    const sources = (response.citations || []).map(citation => {
+      let source = {
+        content: citation.content || citation.text || '',
+        metadata: citation.metadata || {},
+        documentId: citation.documentId || '',
+        relevanceScore: citation.score || 0
+      };
+
+      // Enhanced source mapping with data source type detection
+      if (citation.retrievedReferences) {
+        const reference = citation.retrievedReferences[0];
+        source = {
+          content: citation.generatedResponsePart?.textResponsePart?.text || '',
+          metadata: citation.retrievedReferences || [],
+          documentId: reference?.location?.s3Location?.uri || '',
+          relevanceScore: reference?.metadata?.score || 0
+        };
+
+        // Determine data source type from S3 path
+        const s3Uri = reference?.location?.s3Location?.uri || '';
+        if (s3Uri.includes('/web-scrapes/')) {
+          source.dataSourceType = 'website';
+        } else if (s3Uri.includes('/pdfs/')) {
+          source.dataSourceType = 'pdf';
+        } else if (s3Uri.includes('/documents/')) {
+          source.dataSourceType = 'document';
+        } else {
+          source.dataSourceType = 'unknown';
+        }
+      }
+
+      return source;
+    });
 
     res.json({
       success: true,
       data: {
-        answer: response.answer,
-        citations: response.citations,
+        answer: response.answer || '',
+        sources: sources,
         sessionId: response.sessionId,
-        analysis: response.analysis,
-        session: response.session,
-        metadata: response.metadata,
+        model: response.metadata?.agentId || 'agent',
+        agentMetadata: {
+          analysis: response.analysis,
+          session: response.session,
+          agentId: response.metadata?.agentId,
+          responseTime: response.metadata?.responseTime,
+          tokensUsed: response.metadata?.tokensUsed
+        },
+        appliedFilters: dataSources || null,
+        method: 'agent',
         timestamp: new Date().toISOString()
       }
     });
@@ -150,7 +315,7 @@ router.post('/', [
     logger.error('Agent query error:', error);
     
     // Provide specific error handling
-    if (error.message.includes('Agent not found')) {
+    if (error.message.includes('Agent not found') || error.message.includes('BEDROCK_AGENT_ID is not configured')) {
       return res.status(404).json({
         success: false,
         error: 'Agent not configured',
@@ -412,6 +577,10 @@ router.post('/setup', [
   }
 });
 
+
+
+
+
 /**
  * List existing agents
  * GET /api/chat/agent/list
@@ -561,6 +730,56 @@ router.get('/config', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to generate configuration',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Verify environment configuration
+ * GET /api/chat/agent/verify
+ */
+router.get('/verify', (req, res) => {
+  try {
+    const envCheck = {
+      AWS_REGION: !!process.env.AWS_REGION,
+      AWS_ACCESS_KEY_ID: !!process.env.AWS_ACCESS_KEY_ID,
+      AWS_SECRET_ACCESS_KEY: !!process.env.AWS_SECRET_ACCESS_KEY,
+      BEDROCK_AGENT_ID: !!process.env.BEDROCK_AGENT_ID,
+      BEDROCK_AGENT_ALIAS_ID: !!process.env.BEDROCK_AGENT_ALIAS_ID,
+      BEDROCK_KNOWLEDGE_BASE_ID: !!process.env.BEDROCK_KNOWLEDGE_BASE_ID
+    };
+
+    const missingEnvVars = Object.entries(envCheck)
+      .filter(([key, hasValue]) => !hasValue)
+      .map(([key]) => key);
+
+    const isConfigured = missingEnvVars.length === 0 || 
+                        (missingEnvVars.length === 1 && missingEnvVars[0] === 'BEDROCK_AGENT_ALIAS_ID');
+
+    res.json({
+      success: true,
+      data: {
+        configured: isConfigured,
+        environmentVariables: envCheck,
+        missingRequired: missingEnvVars.filter(key => key !== 'BEDROCK_AGENT_ALIAS_ID'),
+        agentValues: {
+          agentId: process.env.BEDROCK_AGENT_ID ? `${process.env.BEDROCK_AGENT_ID.substring(0, 8)}...` : null,
+          agentAliasId: process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID (default)',
+          knowledgeBaseId: process.env.BEDROCK_KNOWLEDGE_BASE_ID ? `${process.env.BEDROCK_KNOWLEDGE_BASE_ID.substring(0, 8)}...` : null,
+          region: process.env.AWS_REGION || 'us-east-1 (default)'
+        },
+        recommendations: isConfigured 
+          ? ['Configuration looks good! Try testing the agent.']
+          : ['Please set the missing environment variables and restart the server.']
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error verifying environment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to verify environment',
       message: error.message
     });
   }

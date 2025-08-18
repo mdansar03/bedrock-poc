@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { MessageCircle, Send, User, Bot, Loader, ExternalLink, TestTube, Settings, Zap } from 'lucide-react'
+import { MessageCircle, Send, User, Bot, Loader, ExternalLink, TestTube, Settings, Zap, Globe, FileText, File } from 'lucide-react'
 import { chatAPI, agentAPI } from '../utils/api'
+import DataSourceSelector from '../components/DataSourceSelector'
 
 const ChatPage = () => {
   const [messages, setMessages] = useState([
@@ -24,6 +25,11 @@ const ChatPage = () => {
     structureResponse: true
   })
   const [showSettings, setShowSettings] = useState(false)
+  const [selectedDataSources, setSelectedDataSources] = useState({
+    websites: [],
+    pdfs: [],
+    documents: []
+  })
   
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -131,11 +137,28 @@ const ChatPage = () => {
       let response;
       
       if (useAgent && agentInfo) {
-        // Use agent API
-        response = await agentAPI.sendMessage(userMessage.content, sessionId, {
-          useEnhancement: enhancementOptions.requestElaboration,
-          sessionConfig: { preferences: enhancementOptions }
-        })
+        // Prepare data sources for filtering (only include non-empty arrays)
+        const dataSources = {};
+        if (selectedDataSources.websites?.length > 0) {
+          dataSources.websites = selectedDataSources.websites;
+        }
+        if (selectedDataSources.pdfs?.length > 0) {
+          dataSources.pdfs = selectedDataSources.pdfs;
+        }
+        if (selectedDataSources.documents?.length > 0) {
+          dataSources.documents = selectedDataSources.documents;
+        }
+
+        // Use agent API with data source filtering
+        response = await agentAPI.sendMessage(
+          userMessage.content, 
+          sessionId, 
+          {
+            useEnhancement: enhancementOptions.requestElaboration,
+            sessionConfig: { preferences: enhancementOptions }
+          },
+          Object.keys(dataSources).length > 0 ? dataSources : null
+        )
       } else {
         // Use traditional chat API with agent fallback
         response = await chatAPI.sendMessage(
@@ -160,6 +183,7 @@ const ChatPage = () => {
         model: response.data.model,
         method: response.data.method,
         agentMetadata: response.data.agentMetadata,
+        appliedFilters: response.data.appliedFilters,
         timestamp: new Date().toISOString()
       }
 
@@ -226,6 +250,15 @@ const ChatPage = () => {
         <p className="text-gray-600">
           Ask questions about your scraped content. I'll use {useAgent ? 'intelligent agents' : 'the knowledge base'} to provide accurate answers.
         </p>
+        
+        {/* Data Source Filter */}
+        <div className="mt-4">
+          <DataSourceSelector 
+            selectedDataSources={selectedDataSources}
+            onDataSourcesChange={setSelectedDataSources}
+            disabled={loading}
+          />
+        </div>
         
         {/* Settings Panel */}
         {showSettings && (
@@ -333,6 +366,33 @@ const ChatPage = () => {
                   }`}>
                     <p className="whitespace-pre-wrap">{message.content}</p>
                     
+                    {/* Applied Filters */}
+                    {message.appliedFilters && (
+                      <div className="mt-3 pt-3 border-t border-gray-300">
+                        <p className="text-sm font-medium mb-2">Filtered Sources:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {message.appliedFilters.websites?.map((website) => (
+                            <span key={`filter-website-${website}`} className="inline-flex items-center px-2 py-1 rounded text-xs bg-blue-200 text-blue-800">
+                              <Globe size={10} className="mr-1" />
+                              {website}
+                            </span>
+                          ))}
+                          {message.appliedFilters.pdfs?.map((pdf) => (
+                            <span key={`filter-pdf-${pdf}`} className="inline-flex items-center px-2 py-1 rounded text-xs bg-red-200 text-red-800">
+                              <FileText size={10} className="mr-1" />
+                              {pdf}
+                            </span>
+                          ))}
+                          {message.appliedFilters.documents?.map((doc) => (
+                            <span key={`filter-doc-${doc}`} className="inline-flex items-center px-2 py-1 rounded text-xs bg-green-200 text-green-800">
+                              <File size={10} className="mr-1" />
+                              {doc}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Sources */}
                     {message.sources && message.sources.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-300">
@@ -340,15 +400,26 @@ const ChatPage = () => {
                         <div className="space-y-1">
                           {message.sources.map((source, index) => (
                             <div key={index} className="text-sm">
-                              <a
-                                href={source.url || source.metadata?.[0]?.location?.s3Location?.uri || '#'}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center text-blue-300 hover:text-blue-100"
-                              >
-                                <ExternalLink size={12} className="mr-1" />
-                                {source.title || source.metadata?.[0]?.sourceMetadata?.title || `Source ${index + 1}`}
-                              </a>
+                              <div className="flex items-center space-x-2">
+                                <a
+                                  href={source.url || source.metadata?.[0]?.location?.s3Location?.uri || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center text-blue-300 hover:text-blue-100"
+                                >
+                                  <ExternalLink size={12} className="mr-1" />
+                                  {source.title || source.metadata?.[0]?.sourceMetadata?.title || `Source ${index + 1}`}
+                                </a>
+                                {source.dataSourceType && (
+                                  <span className={`text-xs px-1 py-0.5 rounded ${
+                                    source.dataSourceType === 'website' ? 'bg-blue-200 text-blue-800' :
+                                    source.dataSourceType === 'pdf' ? 'bg-red-200 text-red-800' :
+                                    'bg-green-200 text-green-800'
+                                  }`}>
+                                    {source.dataSourceType}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>

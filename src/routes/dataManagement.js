@@ -10,12 +10,12 @@ const dataManagementService = new DataManagementService();
  * @swagger
  * /api/data-management/domains:
  *   get:
- *     summary: Get domains summary
- *     description: Retrieve a summary of all domains in the knowledge base with document counts and metadata
+ *     summary: Get comprehensive data sources summary
+ *     description: Retrieve a summary of all data sources in the knowledge base including websites, PDFs, and documents with detailed metadata
  *     tags: [Data Management]
  *     responses:
  *       200:
- *         description: Successfully retrieved domains summary
+ *         description: Successfully retrieved data sources summary
  *         content:
  *           application/json:
  *             schema:
@@ -30,29 +30,163 @@ const dataManagementService = new DataManagementService();
  *                 data:
  *                   type: object
  *                   properties:
+ *                     totalDomains:
+ *                       type: integer
+ *                       example: 5
+ *                       description: "Number of website domains (legacy field)"
  *                     domains:
  *                       type: array
+ *                       description: "Website domains data (legacy format)"
  *                       items:
  *                         type: object
  *                         properties:
  *                           domain:
  *                             type: string
  *                             example: "example.com"
+ *                           type:
+ *                             type: string
+ *                             example: "website"
  *                           documentCount:
  *                             type: integer
  *                             example: 15
+ *                           totalFiles:
+ *                             type: integer
+ *                             example: 25
  *                           lastUpdate:
  *                             type: string
  *                             format: date-time
  *                           status:
  *                             type: string
  *                             example: "active"
- *                     totalDomains:
- *                       type: integer
- *                       example: 5
- *                     totalDocuments:
- *                       type: integer
- *                       example: 87
+ *                           sizeFormatted:
+ *                             type: string
+ *                             example: "2.5 MB"
+ *                     dataSources:
+ *                       type: object
+ *                       description: "Enhanced breakdown by data source type"
+ *                       properties:
+ *                         websites:
+ *                           type: object
+ *                           properties:
+ *                             count:
+ *                               type: integer
+ *                               example: 3
+ *                             items:
+ *                               type: array
+ *                               items:
+ *                                 type: object
+ *                                 properties:
+ *                                   domain:
+ *                                     type: string
+ *                                     example: "example.com"
+ *                                   type:
+ *                                     type: string
+ *                                     example: "website"
+ *                                   files:
+ *                                     type: integer
+ *                                     example: 15
+ *                                   size:
+ *                                     type: integer
+ *                                     example: 2621440
+ *                                   sizeFormatted:
+ *                                     type: string
+ *                                     example: "2.5 MB"
+ *                                   lastUpdate:
+ *                                     type: string
+ *                                     format: date-time
+ *                         pdfs:
+ *                           type: object
+ *                           properties:
+ *                             count:
+ *                               type: integer
+ *                               example: 5
+ *                             items:
+ *                               type: array
+ *                               items:
+ *                                 type: object
+ *                                 properties:
+ *                                   fileName:
+ *                                     type: string
+ *                                     example: "user-manual"
+ *                                   type:
+ *                                     type: string
+ *                                     example: "pdf"
+ *                                   originalName:
+ *                                     type: string
+ *                                     example: "user-manual.pdf"
+ *                                   fileId:
+ *                                     type: string
+ *                                     example: "abc123def456"
+ *                                   size:
+ *                                     type: integer
+ *                                     example: 1048576
+ *                                   sizeFormatted:
+ *                                     type: string
+ *                                     example: "1.0 MB"
+ *                                   lastUpdate:
+ *                                     type: string
+ *                                     format: date-time
+ *                         documents:
+ *                           type: object
+ *                           properties:
+ *                             count:
+ *                               type: integer
+ *                               example: 7
+ *                             items:
+ *                               type: array
+ *                               items:
+ *                                 type: object
+ *                                 properties:
+ *                                   fileName:
+ *                                     type: string
+ *                                     example: "documentation"
+ *                                   type:
+ *                                     type: string
+ *                                     example: "docx"
+ *                                   category:
+ *                                     type: string
+ *                                     example: "docs"
+ *                                   originalName:
+ *                                     type: string
+ *                                     example: "documentation.docx"
+ *                                   fileId:
+ *                                     type: string
+ *                                     example: "xyz789abc012"
+ *                                   size:
+ *                                     type: integer
+ *                                     example: 524288
+ *                                   sizeFormatted:
+ *                                     type: string
+ *                                     example: "512 KB"
+ *                                   lastUpdate:
+ *                                     type: string
+ *                                     format: date-time
+ *                     summary:
+ *                       type: object
+ *                       properties:
+ *                         totalDataSources:
+ *                           type: integer
+ *                           example: 15
+ *                           description: "Total count of all data sources"
+ *                         totalWebsites:
+ *                           type: integer
+ *                           example: 3
+ *                         totalPdfs:
+ *                           type: integer
+ *                           example: 5
+ *                         totalDocuments:
+ *                           type: integer
+ *                           example: 7
+ *                         totalFiles:
+ *                           type: integer
+ *                           example: 120
+ *                           description: "Total number of individual files"
+ *                         totalSize:
+ *                           type: integer
+ *                           example: 10485760
+ *                         totalSizeFormatted:
+ *                           type: string
+ *                           example: "10.0 MB"
  *       500:
  *         description: Server error
  *         content:

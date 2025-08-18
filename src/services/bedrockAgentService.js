@@ -36,6 +36,15 @@ class BedrockAgentService {
     this.agentAliasId = process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID'; // Default test alias
     this.knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID;
     
+    // Log configuration for debugging
+    logger.debug('Bedrock Agent Service Configuration:', {
+      hasAgentId: !!this.agentId,
+      agentId: this.agentId ? `${this.agentId.substring(0, 8)}...` : 'Not configured',
+      agentAliasId: this.agentAliasId,
+      hasKnowledgeBaseId: !!this.knowledgeBaseId,
+      region: process.env.AWS_REGION || 'us-east-1'
+    });
+    
     // Session management
     this.activeSessions = new Map();
     this.sessionTimeout = 30 * 60 * 1000; // 30 minutes
@@ -46,58 +55,7 @@ class BedrockAgentService {
     this.maxConcurrentRequests = 2;
     this.rateLimitDelay = 1000; // 1 second between requests
     
-    // Agent prompt templates for different interaction types
-    this.agentPrompts = {
-      knowledgeQuery: {
-        system: `You are an intelligent AI assistant with access to a comprehensive knowledge base. Your primary function is to provide accurate, detailed, and helpful responses to user queries by leveraging the available knowledge sources.
-
-CORE CAPABILITIES:
-- Access and analyze information from connected knowledge bases
-- Provide detailed explanations with proper context
-- Cite sources and provide references when available
-- Understand complex queries and break them down into actionable insights
-- Offer follow-up suggestions and related information
-
-RESPONSE GUIDELINES:
-1. Always search the knowledge base thoroughly before responding
-2. Provide comprehensive answers with proper structure
-3. Include relevant examples, code snippets, or practical applications when applicable
-4. Cite specific sources from the knowledge base when referencing information
-5. If information is not available, clearly state the limitation
-6. Suggest related topics or follow-up questions when helpful
-7. Maintain a professional yet conversational tone
-8. Break down complex topics into digestible sections
-
-QUERY ANALYSIS:
-- Identify the main intent and scope of the user's question
-- Determine what type of information would be most helpful
-- Consider multiple perspectives or approaches when relevant
-- Look for opportunities to provide actionable insights`,
-
-        conversational: `You are having a conversation with a user about topics related to the knowledge base. Maintain context from previous exchanges while providing helpful and accurate information.
-
-CONVERSATIONAL GUIDELINES:
-- Reference previous parts of the conversation when relevant
-- Build upon earlier topics and questions
-- Maintain continuity in the discussion
-- Provide natural, flowing responses that feel like a genuine conversation
-- Ask clarifying questions when the intent is unclear
-- Suggest natural next steps or related topics
-- Remember user preferences and context from the session`,
-
-        analytical: `You are an analytical AI assistant focused on providing in-depth analysis and insights. When responding to queries, prioritize comprehensive analysis over simple answers.
-
-ANALYTICAL APPROACH:
-- Break down complex problems into component parts
-- Provide multi-faceted analysis from different angles
-- Include pros and cons, benefits and risks
-- Offer strategic recommendations when appropriate
-- Compare and contrast different approaches or solutions
-- Provide quantitative insights when data is available
-- Consider both short-term and long-term implications
-- Include industry context and best practices`
-      }
-    };
+    // Use centralized prompt manager for all instructions
 
     // Initialize cleanup interval for expired sessions
     this.initializeSessionCleanup();
@@ -213,7 +171,7 @@ ANALYTICAL APPROACH:
       interactionStyle,
       confidence,
       queryEnhancement,
-      suggestedPrompt: this.agentPrompts.knowledgeQuery[interactionStyle],
+      suggestedPrompt: null, // Simplified - no complex prompt management
       technicalScore,
       conversationalScore,
       analyticalScore,
@@ -253,10 +211,58 @@ ANALYTICAL APPROACH:
   }
 
   /**
-   * Invoke Bedrock Agent with enhanced query processing
+   * Apply data source filtering to enhance the query with specific source constraints
+   * @param {string} query - The original user query
+   * @param {Object} dataSources - Object containing arrays of data sources to filter by
+   * @returns {string} - The enhanced query with data source filtering instructions
+   */
+  applyDataSourceFiltering(query, dataSources) {
+    if (!dataSources || (
+      (!dataSources.websites || dataSources.websites.length === 0) &&
+      (!dataSources.pdfs || dataSources.pdfs.length === 0) &&
+      (!dataSources.documents || dataSources.documents.length === 0)
+    )) {
+      return query;
+    }
+
+    let filterInstructions = [];
+    
+    // Build specific filtering instructions for each data source type
+    if (dataSources.websites && dataSources.websites.length > 0) {
+      filterInstructions.push(`From websites: ${dataSources.websites.join(', ')}`);
+    }
+    
+    if (dataSources.pdfs && dataSources.pdfs.length > 0) {
+      filterInstructions.push(`From PDF documents: ${dataSources.pdfs.join(', ')}`);
+    }
+    
+    if (dataSources.documents && dataSources.documents.length > 0) {
+      filterInstructions.push(`From uploaded documents: ${dataSources.documents.join(', ')}`);
+    }
+
+    const sourceFilterInstruction = `
+    
+IMPORTANT DATA SOURCE RESTRICTIONS:
+Please ONLY use information from the following specified data sources:
+${filterInstructions.join('\n')}
+
+If the information you need to answer the question is not available in these specific data sources, you MUST clearly state that the information is not available in the selected sources and suggest expanding the search to other sources if needed.
+
+Do NOT use information from any other data sources not explicitly listed above.`;
+
+    return query + sourceFilterInstruction;
+  }
+
+  /**
+   * Invoke Bedrock Agent with enhanced query processing and data source filtering
    * @param {string} query - User query
    * @param {string} sessionId - Session ID for conversation continuity
-   * @param {Object} options - Additional options
+   * @param {Object} options - Additional options including dataSources filter, inference parameters
+   * @param {string} options.model - Model to use for inference
+   * @param {number} options.temperature - Temperature for response generation (0.0-1.0)
+   * @param {number} options.topP - Top P for nucleus sampling (0.0-1.0)
+   * @param {string} options.systemPrompt - Custom system prompt for the agent
+   * @param {Object} options.dataSources - Data source filtering options
    * @returns {Promise<Object>} - Agent response
    */
   async invokeAgent(query, sessionId = null, options = {}) {
@@ -277,31 +283,74 @@ ANALYTICAL APPROACH:
         queryLength: query.length,
         interactionStyle: analysis.interactionStyle,
         confidence: analysis.confidence,
-        messageCount: session.messageCount
+        messageCount: session.messageCount,
+        hasDataSourceFilters: !!options.dataSources,
+        hasCustomModel: !!options.model,
+        hasSystemPrompt: !!options.systemPrompt,
+        temperature: options.temperature,
+        topP: options.topP
       });
 
-      // Use enhanced query if analysis suggests it
-      const finalQuery = options.useEnhancement !== false ? 
+      // Apply data source filtering to the query if specified
+      let enhancedQuery = options.useEnhancement !== false ? 
         analysis.queryEnhancement : query;
+
+      // Apply system prompt if provided
+      if (options.systemPrompt) {
+        enhancedQuery = `${options.systemPrompt}\n\nUser Query: ${enhancedQuery}`;
+        logger.info('Applied custom system prompt to query');
+      }
+
+      if (options.dataSources) {
+        enhancedQuery = this.applyDataSourceFiltering(enhancedQuery, options.dataSources);
+        logger.info('Applied data source filtering to query');
+      }
 
       // Prepare agent invocation parameters
       const agentParams = {
         agentId: this.agentId,
         agentAliasId: this.agentAliasId,
         sessionId: session.id,
-        inputText: finalQuery,
+        inputText: enhancedQuery,
         // Enable trace for debugging (optional)
         enableTrace: process.env.NODE_ENV === 'development',
         // Session state (if any)
         sessionState: options.sessionState || {}
       };
 
+      // Add inference configuration if temperature or topP is provided
+      if (options.temperature !== null || options.topP !== null) {
+        agentParams.inferenceConfiguration = {};
+        
+        if (options.temperature !== null) {
+          agentParams.inferenceConfiguration.temperature = options.temperature;
+        }
+        
+        if (options.topP !== null) {
+          agentParams.inferenceConfiguration.topP = options.topP;
+        }
+        
+        logger.info('Added inference configuration to agent params:', agentParams.inferenceConfiguration);
+      }
+
+      // Add foundation model override if provided
+      if (options.model) {
+        // Model override is typically handled at the agent level, not per-invocation
+        // But we'll log it for debugging purposes
+        logger.info('Model override requested (handled at agent configuration level):', options.model);
+      }
+
       logger.debug('Agent invocation parameters:', {
         agentId: this.agentId,
         agentAliasId: this.agentAliasId,
         sessionId: session.id,
-        queryPreview: finalQuery.substring(0, 100) + '...',
-        enableTrace: agentParams.enableTrace
+        queryPreview: enhancedQuery.substring(0, 150) + '...',
+        enableTrace: agentParams.enableTrace,
+        filtersApplied: !!options.dataSources,
+        hasInferenceConfig: !!agentParams.inferenceConfiguration,
+        inferenceConfig: agentParams.inferenceConfiguration,
+        customModel: options.model,
+        hasSystemPrompt: !!options.systemPrompt
       });
 
       // Create the invoke agent command
@@ -312,49 +361,68 @@ ANALYTICAL APPROACH:
         return await this.agentRuntimeClient.send(command);
       });
 
+      logger.debug('Raw AWS response received:', {
+        hasCompletion: !!response.completion,
+        responseType: typeof response,
+        responseKeys: Object.keys(response || {})
+      });
+
       // Process the streaming response
       const agentResponse = await this.processAgentResponse(response);
-      
-      // Update session context
-      session.messageCount++;
-      session.context.topics.push(this.extractTopicFromQuery(query));
-      if (session.context.topics.length > 10) {
-        session.context.topics = session.context.topics.slice(-10); // Keep last 10 topics
+
+      // If no text was captured, try alternative processing
+      if (!agentResponse.text) {
+        logger.warn('No text in initial response processing, trying alternative methods...');
+        const alternativeResponse = await this.processAgentResponseAlternative(response);
+        if (alternativeResponse.text) {
+          logger.info('Alternative processing successful, using alternative response');
+          return this.buildFinalResponse(session, alternativeResponse, analysis, options.dataSources, {
+            temperature: options.temperature,
+            topP: options.topP,
+            model: options.model,
+            systemPrompt: options.systemPrompt
+          });
+        } else {
+          // Final fallback - provide an informative response
+          logger.error('All processing methods failed, providing fallback response');
+          const fallbackResponse = {
+            text: `I apologize, but I'm having trouble processing your query "${analysis.originalQuery}" at the moment. This could be due to a temporary service issue or configuration problem. Please try rephrasing your question or contact support if the issue persists.`,
+            citations: [],
+            trace: null,
+            responseTime: Date.now() - Date.parse(new Date().toISOString()),
+            tokensUsed: 0
+          };
+          return this.buildFinalResponse(session, fallbackResponse, analysis, options.dataSources, {
+            temperature: options.temperature,
+            topP: options.topP,
+            model: options.model,
+            systemPrompt: options.systemPrompt
+          });
+        }
       }
 
       logger.info('Agent response processed successfully:', {
         sessionId: session.id,
         responseLength: agentResponse.text?.length || 0,
         citationCount: agentResponse.citations?.length || 0,
-        traceAvailable: !!agentResponse.trace
+        traceAvailable: !!agentResponse.trace,
+        filtersApplied: !!options.dataSources
       });
 
-      return {
-        sessionId: session.id,
-        answer: agentResponse.text,
-        citations: agentResponse.citations || [],
-        trace: agentResponse.trace,
-        analysis: analysis,
-        session: {
-          messageCount: session.messageCount,
-          topics: session.context.topics,
-          interactionStyle: analysis.interactionStyle
-        },
-        metadata: {
-          agentId: this.agentId,
-          agentAliasId: this.agentAliasId,
-          responseTime: agentResponse.responseTime,
-          tokensUsed: agentResponse.tokensUsed,
-          timestamp: new Date().toISOString()
-        }
-      };
+      return this.buildFinalResponse(session, agentResponse, analysis, options.dataSources, {
+        temperature: options.temperature,
+        topP: options.topP,
+        model: options.model,
+        systemPrompt: options.systemPrompt
+      });
 
     } catch (error) {
       logger.error('Agent invocation failed:', {
         error: error.message,
         agentId: this.agentId,
         sessionId: sessionId,
-        query: query.substring(0, 100) + '...'
+        query: query.substring(0, 100) + '...',
+        hasFilters: !!options.dataSources
       });
       
       // Provide specific error handling for common issues
@@ -383,9 +451,22 @@ ANALYTICAL APPROACH:
     let tokensUsed = 0;
 
     try {
+      logger.debug('Raw agent response structure:', {
+        hasCompletion: !!response.completion,
+        responseKeys: Object.keys(response || {})
+      });
+
       // Handle streaming response
       if (response.completion) {
         for await (const chunk of response.completion) {
+          logger.debug('Processing chunk:', {
+            chunkType: typeof chunk,
+            hasChunk: !!chunk.chunk,
+            hasTrace: !!chunk.trace,
+            chunkKeys: Object.keys(chunk || {})
+          });
+
+          // Process chunk data
           if (chunk.chunk) {
             const chunkData = chunk.chunk;
             
@@ -393,17 +474,36 @@ ANALYTICAL APPROACH:
             if (chunkData.bytes) {
               const textChunk = new TextDecoder().decode(chunkData.bytes);
               fullText += textChunk;
+              logger.debug('Added text chunk:', { length: textChunk.length, preview: textChunk.substring(0, 100) });
             }
             
             // Process attribution/citations
             if (chunkData.attribution) {
-              citations.push(...(chunkData.attribution.citations || []));
+              const newCitations = chunkData.attribution.citations || [];
+              citations.push(...newCitations);
+              logger.debug('Added citations:', { count: newCitations.length });
+            }
+          }
+
+          // Check for different chunk formats
+          if (chunk.bytes) {
+            const textChunk = new TextDecoder().decode(chunk.bytes);
+            fullText += textChunk;
+            logger.debug('Added direct bytes chunk:', { length: textChunk.length });
+          }
+
+          // Process final response chunk
+          if (chunk.finalResponse) {
+            if (chunk.finalResponse.text) {
+              fullText += chunk.finalResponse.text;
+              logger.debug('Added final response text:', { length: chunk.finalResponse.text.length });
             }
           }
           
           // Process trace information (for debugging)
           if (chunk.trace) {
             trace = chunk.trace;
+            logger.debug('Trace information captured');
           }
           
           // Track token usage if available
@@ -413,14 +513,28 @@ ANALYTICAL APPROACH:
         }
       }
 
+      // If no text was captured, check if response has direct text
+      if (!fullText && response.output) {
+        fullText = response.output;
+        logger.debug('Using direct output:', { length: fullText.length });
+      }
+
       const responseTime = Date.now() - startTime;
 
-      logger.debug('Agent response processed:', {
+      logger.info('Agent response processed:', {
         textLength: fullText.length,
         citationCount: citations.length,
         responseTime: `${responseTime}ms`,
-        tokensUsed
+        tokensUsed,
+        hasText: !!fullText
       });
+
+      // If still no text, log the full response structure for debugging
+      if (!fullText) {
+        logger.warn('No text captured from agent response. Full response structure:', {
+          response: JSON.stringify(response, null, 2).substring(0, 1000)
+        });
+      }
 
       return {
         text: fullText.trim(),
@@ -615,6 +729,146 @@ ANALYTICAL APPROACH:
         timestamp: new Date().toISOString()
       };
     }
+  }
+
+  /**
+   * Alternative agent response processing for different SDK versions
+   * @param {Object} response - Raw agent response
+   * @returns {Promise<Object>} - Processed response
+   */
+  async processAgentResponseAlternative(response) {
+    const startTime = Date.now();
+    let fullText = '';
+    let citations = [];
+    let trace = null;
+    let tokensUsed = 0;
+
+    try {
+      logger.debug('Trying alternative response processing...');
+
+      // Check for different response structures
+      if (response.completion) {
+        // Try to process as async iterator
+        try {
+          const chunks = [];
+          for await (const chunk of response.completion) {
+            chunks.push(chunk);
+          }
+          
+          logger.debug('Collected chunks:', { count: chunks.length });
+          
+          for (const chunk of chunks) {
+            // Different processing based on chunk structure
+            if (chunk.chunk?.bytes) {
+              const text = new TextDecoder().decode(chunk.chunk.bytes);
+              fullText += text;
+            } else if (chunk.bytes) {
+              const text = new TextDecoder().decode(chunk.bytes);
+              fullText += text;
+            } else if (chunk.completion?.text) {
+              fullText += chunk.completion.text;
+            } else if (chunk.text) {
+              fullText += chunk.text;
+            }
+
+            // Extract citations
+            if (chunk.chunk?.attribution?.citations) {
+              citations.push(...chunk.chunk.attribution.citations);
+            } else if (chunk.attribution?.citations) {
+              citations.push(...chunk.attribution.citations);
+            }
+
+            if (chunk.trace) {
+              trace = chunk.trace;
+            }
+          }
+        } catch (iteratorError) {
+          logger.debug('Iterator approach failed:', iteratorError.message);
+        }
+      }
+
+      // If still no text, try direct property access
+      if (!fullText) {
+        if (response.text) {
+          fullText = response.text;
+        } else if (response.output) {
+          fullText = response.output;
+        } else if (response.completion?.text) {
+          fullText = response.completion.text;
+        }
+      }
+
+      const responseTime = Date.now() - startTime;
+
+      logger.debug('Alternative processing result:', {
+        textLength: fullText.length,
+        citationCount: citations.length,
+        responseTime: `${responseTime}ms`
+      });
+
+      return {
+        text: fullText.trim(),
+        citations,
+        trace,
+        responseTime,
+        tokensUsed
+      };
+
+    } catch (error) {
+      logger.error('Alternative processing failed:', error);
+      return {
+        text: '',
+        citations: [],
+        trace: null,
+        responseTime: Date.now() - startTime,
+        tokensUsed: 0
+      };
+    }
+  }
+
+  /**
+   * Build final response object
+   * @param {Object} session - Session object
+   * @param {Object} agentResponse - Processed agent response
+   * @param {Object} analysis - Query analysis
+   * @param {Object} dataSources - Data sources used for filtering (if any)
+   * @param {Object} inferenceParams - Inference parameters used (temperature, topP, model, systemPrompt)
+   * @returns {Object} - Final response
+   */
+  buildFinalResponse(session, agentResponse, analysis, dataSources, inferenceParams = {}) {
+    // Update session context
+    session.messageCount++;
+    session.context.topics.push(this.extractTopicFromQuery(analysis.originalQuery));
+    if (session.context.topics.length > 10) {
+      session.context.topics = session.context.topics.slice(-10);
+    }
+
+    return {
+      sessionId: session.id,
+      answer: agentResponse.text || '',
+      citations: agentResponse.citations || [],
+      trace: agentResponse.trace,
+      analysis: analysis,
+      session: {
+        messageCount: session.messageCount,
+        topics: session.context.topics,
+        interactionStyle: analysis.interactionStyle
+      },
+      metadata: {
+        agentId: this.agentId,
+        agentAliasId: this.agentAliasId,
+        responseTime: agentResponse.responseTime,
+        tokensUsed: agentResponse.tokensUsed,
+        timestamp: new Date().toISOString(),
+        dataSourcesUsed: dataSources || [],
+        inferenceParameters: {
+          temperature: inferenceParams.temperature,
+          topP: inferenceParams.topP,
+          model: inferenceParams.model,
+          hasSystemPrompt: !!inferenceParams.systemPrompt
+        }
+      }
+    };
   }
 }
 
