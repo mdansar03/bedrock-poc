@@ -182,18 +182,46 @@ export const chatAPI = {
 
 // New Agent API functions
 export const agentAPI = {
-  // Send message to Bedrock Agent with optional data source filtering
-  sendMessage: async (message, sessionId = null, options = {}, dataSources = null) => {
-    const payload = { message };
-    if (sessionId) {
-      payload.sessionId = sessionId;
-    }
-    if (dataSources) {
-      payload.dataSources = dataSources;
-    }
-    if (Object.keys(options).length > 0) {
-      payload.options = options;
-    }
+  // Send message to Bedrock Agent with enhanced options including conversation history
+  sendMessage: async (message, sessionId = null, options = {}) => {
+    const payload = { 
+      message,
+      sessionId,
+      ...options // This now includes dataSources, model, temperature, topP, systemPrompt, history, etc.
+    };
+
+    const response = await api.post('/chat/agent', payload);
+    return response.data;
+  },
+
+  // Send message with full parameter support (enhanced version)
+  sendMessageWithHistory: async ({
+    message,
+    sessionId = null,
+    dataSources = null,
+    model = null,
+    temperature = null,
+    topP = null,
+    systemPrompt = null,
+    history = {
+      enabled: true,
+      maxMessages: 6,
+      contextWeight: 'balanced'
+    },
+    options = {}
+  }) => {
+    const payload = {
+      message,
+      sessionId,
+      dataSources,
+      model,
+      temperature,
+      topP,
+      systemPrompt,
+      history,
+      options
+    };
+
     const response = await api.post('/chat/agent', payload);
     return response.data;
   },
@@ -220,6 +248,36 @@ export const agentAPI = {
   getSessions: async () => {
     const response = await api.get('/chat/agent/sessions');
     return response.data;
+  },
+
+  // Get conversation history for a session
+  getConversationHistory: async (sessionId, options = {}) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.append('limit', options.limit);
+    if (options.messageType) params.append('messageType', options.messageType);
+    if (options.includeMetadata !== undefined) params.append('includeMetadata', options.includeMetadata);
+    if (options.fromTimestamp) params.append('fromTimestamp', options.fromTimestamp);
+    if (options.toTimestamp) params.append('toTimestamp', options.toTimestamp);
+    
+    const queryString = params.toString();
+    const url = `/chat/agent/history/${sessionId}${queryString ? `?${queryString}` : ''}`;
+    
+    const response = await api.get(url);
+    return response.data;
+  },
+
+  // Clear conversation history for a session
+  clearConversationHistory: async (sessionId) => {
+    const response = await api.delete(`/chat/agent/history/${sessionId}`);
+    return response.data;
+  },
+
+  // Get recent conversations (helper function)
+  getRecentConversations: async (sessionId, limit = 10) => {
+    return await agentAPI.getConversationHistory(sessionId, {
+      limit,
+      includeMetadata: false
+    });
   },
 
   // Setup and configuration

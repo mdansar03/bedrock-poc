@@ -27,17 +27,17 @@ class BedrockKnowledgeBaseService {
     this.knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID;
     this.dataSourceId = process.env.BEDROCK_DATA_SOURCE_ID;
     
-    // Chunking configuration optimized for Bedrock
+    // Chunking configuration optimized for vector search and retrieval
     this.chunkConfig = {
-      maxChunkSize: 1000,     // Optimal for Bedrock retrieval
-      overlapSize: 100,       // Character overlap between chunks
-      minChunkSize: 100,      // Minimum viable chunk size
+      maxChunkSize: 2000,     // Optimal size for embedding models and retrieval
+      overlapSize: 200,       // Character overlap between chunks for context preservation
+      minChunkSize: 200,      // Minimum viable chunk size for meaningful content
       separators: ['\n\n', '\n', '. ', '! ', '? ', '; ']
     };
   }
 
   /**
-   * Store document in S3 and sync with Knowledge Base (replaces Pinecone storage)
+   * Store document in S3 and sync with Knowledge Base for vector search
    * @param {Object} document - Document object with content and metadata
    * @returns {Promise<Object>} - Storage result
    */

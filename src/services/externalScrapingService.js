@@ -968,7 +968,7 @@ class ExternalScrapingService {
 
   /**
    * Create intelligent content chunks for vector storage
-   * Optimized for Pinecone's 40KB metadata limit to maximize content density
+   * Optimized for semantic search and retrieval with enhanced context preservation
    * @param {string} content - Full content text
    * @param {string} url - Source URL
    * @param {string} title - Page title
@@ -977,13 +977,12 @@ class ExternalScrapingService {
   createContentChunks(content, url, title) {
     const chunks = [];
     
-    // Enhanced chunking strategy for maximum Pinecone utilization
-    // Pinecone metadata limit: 40KB per record
-    // Strategy: Create larger, semantically rich chunks with hierarchical content
-    const primaryChunkSize = 15000; // Primary content (15KB)
-    const contextChunkSize = 20000; // Additional context (20KB) 
-    const totalMaxSize = 35000; // Reserve 5KB for metadata overhead
-    const overlapSize = 500; // Larger overlap for better context continuity
+    // Enhanced chunking strategy for optimal semantic search performance
+    // Strategy: Create semantically rich chunks with hierarchical content and context
+    const primaryChunkSize = 8000; // Primary content for optimal embedding performance
+    const contextChunkSize = 4000; // Additional context for semantic understanding
+    const maxChunkSize = 12000; // Total maximum size for efficient processing
+    const overlapSize = 400; // Overlap for better context continuity
     
     if (!content || content.length === 0) {
       return chunks;
@@ -1095,7 +1094,7 @@ class ExternalScrapingService {
   }
 
   /**
-   * Create an enhanced chunk object with maximum content density for Pinecone
+   * Create an enhanced chunk object optimized for semantic search
    * @param {string} primaryContent - Main chunk content
    * @param {string} contextualContent - Additional contextual content
    * @param {string} url - Source URL
@@ -1110,8 +1109,8 @@ class ExternalScrapingService {
     // Combine primary and contextual content with clear separation
     const fullContent = `PRIMARY CONTENT:\n${primaryContent}\n\nCONTEXTUAL INFORMATION:\n${contextualContent}`;
     
-    // Ensure we don't exceed Pinecone's 40KB metadata limit
-    const maxContentSize = 35000; // Reserve 5KB for metadata overhead
+    // Ensure optimal chunk size for embedding and retrieval performance
+    const maxContentSize = 12000; // Optimal size for most embedding models
     const finalContent = fullContent.length > maxContentSize ? 
       fullContent.substring(0, maxContentSize) + '...[TRUNCATED]' : 
       fullContent;
@@ -1129,7 +1128,7 @@ class ExternalScrapingService {
         source: 'external-scraper',
         createdAt: new Date().toISOString(),
         chunkType: 'enhanced-dense',
-        contentDensity: Math.round((finalContent.length / 40000) * 100), // Percentage of Pinecone limit used
+        contentDensity: Math.round((finalContent.length / maxContentSize) * 100), // Content utilization percentage
         ...chunkMetadata
       }
     };
@@ -1203,10 +1202,10 @@ class ExternalScrapingService {
     const metadata = chunk.metadata || {};
     
     // Quality checks
-    const hasMinimumContent = content.length >= 200; // Increased minimum for dense chunks
+    const hasMinimumContent = content.length >= 300; // Minimum content for meaningful chunks
     const hasReasonableWordsRatio = (content.match(/[a-zA-Z]{3,}/g) || []).length / content.length > 0.05;
     const hasMetadata = metadata.url && metadata.title;
-    const hasGoodDensity = metadata.contentDensity && metadata.contentDensity > 0.5; // At least 0.5% of Pinecone limit
+    const hasGoodDensity = metadata.contentDensity && metadata.contentDensity > 10; // At least 10% content utilization for quality
     
     return hasMinimumContent && hasReasonableWordsRatio && hasMetadata && hasGoodDensity;
   }

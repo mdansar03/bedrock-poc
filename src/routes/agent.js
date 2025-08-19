@@ -54,6 +54,10 @@ const router = express.Router();
  *                 temperature: 0.7
  *                 topP: 0.9
  *                 systemPrompt: "You are a technical documentation expert. Provide detailed, structured responses with examples."
+ *                 history:
+ *                   enabled: true
+ *                   maxMessages: 6
+ *                   contextWeight: "balanced"
  *     responses:
  *       200:
  *         description: Successfully generated agent response
@@ -130,9 +134,13 @@ router.post('/', [
     .withMessage('Message must be between 1 and 2000 characters')
     .trim(),
   body('sessionId')
-    .optional()
-    .isString()
-    .withMessage('Session ID must be a string'),
+    .custom((value) => {
+      // Allow null, undefined, or string values
+      if (value === null || value === undefined || typeof value === 'string') {
+        return true;
+      }
+      throw new Error('Session ID must be a string or null');
+    }),
   body('dataSources')
     .optional()
     .isObject()
@@ -177,7 +185,19 @@ router.post('/', [
     .optional()
     .isString()
     .isLength({ min: 1, max: 4000 })
-    .withMessage('System prompt must be between 1 and 4000 characters')
+    .withMessage('System prompt must be between 1 and 4000 characters'),
+  body('history.enabled')
+    .optional()
+    .isBoolean()
+    .withMessage('History enabled must be a boolean'),
+  body('history.maxMessages')
+    .optional()
+    .isInt({ min: 2, max: 20 })
+    .withMessage('History maxMessages must be between 2 and 20'),
+  body('history.contextWeight')
+    .optional()
+    .isIn(['light', 'balanced', 'heavy'])
+    .withMessage('History contextWeight must be light, balanced, or heavy')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -198,7 +218,8 @@ router.post('/', [
       model = null,
       temperature = null,
       topP = null,
-      systemPrompt = null
+      systemPrompt = null,
+      history = {}
     } = req.body;
 
     logger.info(`Received agent query: ${message.substring(0, 100)}...`);
@@ -224,6 +245,15 @@ router.post('/', [
       logger.info(`System prompt provided: ${systemPrompt.substring(0, 100)}...`);
     }
 
+    // Log history settings if provided
+    if (Object.keys(history).length > 0) {
+      logger.info('Conversation history settings:', {
+        enabled: history.enabled !== false, // Default to true
+        maxMessages: history.maxMessages || 6,
+        contextWeight: history.contextWeight || 'balanced'
+      });
+    }
+
     // Log data source filtering if provided
     if (dataSources) {
       logger.info('Data source filters applied:', {
@@ -233,14 +263,20 @@ router.post('/', [
       });
     }
 
-    // Enhanced options to include data source filtering and inference parameters
+    // Enhanced options to include data source filtering, inference parameters, and history settings
     const enhancedOptions = {
       ...options,
       dataSources: dataSources,
       model: model,
       temperature: temperature,
       topP: topP,
-      systemPrompt: systemPrompt
+      systemPrompt: systemPrompt,
+      history: {
+        enabled: history.enabled !== false, // Default to true
+        maxMessages: history.maxMessages || 6,
+        contextWeight: history.contextWeight || 'balanced',
+        ...history
+      }
     };
 
     // Invoke the Bedrock Agent with enhanced options
@@ -684,6 +720,163 @@ router.put('/:agentId', [
     res.status(500).json({
       success: false,
       error: 'Failed to update agent',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get conversation history for a session
+ * GET /api/chat/agent/history/:sessionId
+ */
+router.get('/history/:sessionId', [
+  query('limit')
+    .optional()
+    .isInt({ min: 1, max: 50 })
+    .withMessage('Limit must be between 1 and 50'),
+  query('messageType')
+    .optional()
+    .isIn(['user', 'assistant'])
+    .withMessage('Message type must be user or assistant'),
+  query('includeMetadata')
+    .optional()
+    .isBoolean()
+    .withMessage('Include metadata must be a boolean')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors.array()
+      });
+    }
+
+    const { sessionId } = req.params;
+    const { 
+      limit = 20, 
+      messageType = null, 
+      includeMetadata = true,
+      fromTimestamp = null,
+      toTimestamp = null
+    } = req.query;
+
+    const historyData = bedrockAgentService.getConversationHistory(sessionId, {
+      limit: parseInt(limit),
+      messageType,
+      includeMetadata: includeMetadata === 'true',
+      fromTimestamp,
+      toTimestamp
+    });
+
+    if (historyData.error) {
+      return res.status(404).json({
+        success: false,
+        error: historyData.error,
+        message: `Session ${sessionId} not found`
+      });
+    }
+
+    res.json({
+      success: true,
+      data: historyData
+    });
+
+  } catch (error) {
+    logger.error('Error retrieving conversation history:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve conversation history',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Clear conversation history for a session
+ * DELETE /api/chat/agent/history/:sessionId
+ */
+router.delete('/history/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = bedrockAgentService.activeSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found',
+        message: `Session ${sessionId} not found`
+      });
+    }
+
+    // Clear conversation history but keep session metadata
+    session.conversationHistory = [];
+    session.historyMetadata = {
+      totalMessages: 0,
+      firstMessageAt: Date.now(),
+      lastMessageAt: Date.now(),
+      avgResponseTime: 0,
+      totalTokensUsed: 0
+    };
+    session.messageCount = 0;
+    session.context.topics = [];
+
+    logger.info(`Cleared conversation history for session: ${sessionId}`);
+
+    res.json({
+      success: true,
+      message: 'Conversation history cleared successfully',
+      data: {
+        sessionId,
+        clearedAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error clearing conversation history:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clear conversation history',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Get all active sessions with their metadata
+ * GET /api/chat/agent/sessions
+ */
+router.get('/sessions', async (req, res) => {
+  try {
+    const sessions = Array.from(bedrockAgentService.activeSessions.entries()).map(([id, session]) => ({
+      sessionId: id,
+      createdAt: new Date(session.createdAt).toISOString(),
+      lastActivity: new Date(session.lastActivity).toISOString(),
+      messageCount: session.messageCount,
+      conversationLength: session.conversationHistory?.length || 0,
+      topics: session.context?.topics?.slice(-3) || [],
+      metadata: session.historyMetadata,
+      sessionAge: Date.now() - session.createdAt
+    }));
+
+    // Sort by last activity (most recent first)
+    sessions.sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+
+    res.json({
+      success: true,
+      data: {
+        sessions,
+        totalSessions: sessions.length,
+        activeSessions: sessions.filter(s => Date.now() - new Date(s.lastActivity) < 30 * 60 * 1000).length // Active in last 30 minutes
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error retrieving sessions:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve sessions',
       message: error.message
     });
   }

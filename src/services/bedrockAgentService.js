@@ -97,6 +97,15 @@ class BedrockAgentService {
           topics: [],
           preferences: {},
           ...sessionConfig
+        },
+        // Enhanced conversation history storage
+        conversationHistory: [],
+        historyMetadata: {
+          totalMessages: 0,
+          firstMessageAt: Date.now(),
+          lastMessageAt: Date.now(),
+          avgResponseTime: 0,
+          totalTokensUsed: 0
         }
       });
       logger.debug(`Created new agent session: ${sessionId}`);
@@ -105,6 +114,163 @@ class BedrockAgentService {
     const session = this.activeSessions.get(sessionId);
     session.lastActivity = Date.now();
     return session;
+  }
+
+  /**
+   * Add message to conversation history
+   * @param {string} sessionId - Session identifier
+   * @param {Object} messageData - Message data to store
+   */
+  addToConversationHistory(sessionId, messageData) {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) {
+      logger.warn(`Attempted to add history to non-existent session: ${sessionId}`);
+      return;
+    }
+
+    const historyEntry = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      type: messageData.type, // 'user' or 'assistant'
+      content: messageData.content,
+      metadata: messageData.metadata || {},
+      ...messageData
+    };
+
+    session.conversationHistory.push(historyEntry);
+    session.historyMetadata.totalMessages++;
+    session.historyMetadata.lastMessageAt = Date.now();
+
+    // Keep only last 50 messages to prevent memory issues
+    if (session.conversationHistory.length > 50) {
+      session.conversationHistory = session.conversationHistory.slice(-50);
+    }
+
+    // Update metadata
+    if (messageData.responseTime) {
+      const currentAvg = session.historyMetadata.avgResponseTime;
+      const count = session.historyMetadata.totalMessages;
+      session.historyMetadata.avgResponseTime = 
+        (currentAvg * (count - 1) + messageData.responseTime) / count;
+    }
+
+    if (messageData.tokensUsed) {
+      session.historyMetadata.totalTokensUsed += messageData.tokensUsed;
+    }
+
+    logger.debug(`Added ${messageData.type} message to session ${sessionId} history`);
+  }
+
+  /**
+   * Get conversation history for a session
+   * @param {string} sessionId - Session identifier
+   * @param {Object} options - Retrieval options
+   * @returns {Object} - Conversation history and metadata
+   */
+  getConversationHistory(sessionId, options = {}) {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) {
+      return {
+        history: [],
+        metadata: null,
+        error: 'Session not found'
+      };
+    }
+
+    const {
+      limit = 20,
+      includeMetadata = true,
+      messageType = null, // 'user', 'assistant', or null for all
+      fromTimestamp = null,
+      toTimestamp = null
+    } = options;
+
+    let history = [...session.conversationHistory];
+
+    // Filter by message type if specified
+    if (messageType) {
+      history = history.filter(msg => msg.type === messageType);
+    }
+
+    // Filter by timestamp range if specified
+    if (fromTimestamp) {
+      history = history.filter(msg => new Date(msg.timestamp) >= new Date(fromTimestamp));
+    }
+    if (toTimestamp) {
+      history = history.filter(msg => new Date(msg.timestamp) <= new Date(toTimestamp));
+    }
+
+    // Apply limit (get most recent messages)
+    history = history.slice(-limit);
+
+    const result = {
+      sessionId: sessionId,
+      history: history,
+      totalMessages: session.conversationHistory.length,
+      filtered: history.length !== session.conversationHistory.length
+    };
+
+    if (includeMetadata) {
+      result.metadata = {
+        ...session.historyMetadata,
+        sessionAge: Date.now() - session.createdAt,
+        lastActivity: session.lastActivity
+      };
+    }
+
+    return result;
+  }
+
+  /**
+   * Build conversation context for agent prompt enhancement
+   * @param {string} sessionId - Session identifier
+   * @param {Object} options - Context building options
+   * @returns {string} - Formatted conversation context
+   */
+  buildConversationContext(sessionId, options = {}) {
+    const {
+      maxMessages = 6, // Include last 6 messages (3 exchanges)
+      includeTimestamps = false,
+      prioritizeRecent = true,
+      contextWeight = 'balanced' // 'light', 'balanced', 'heavy'
+    } = options;
+
+    const historyData = this.getConversationHistory(sessionId, { 
+      limit: maxMessages,
+      includeMetadata: true 
+    });
+
+    if (!historyData.history || historyData.history.length === 0) {
+      return null;
+    }
+
+    let contextLines = [];
+
+    // Add session context summary
+    if (contextWeight !== 'light') {
+      const topics = this.activeSessions.get(sessionId)?.context?.topics?.slice(-3) || [];
+      if (topics.length > 0) {
+        contextLines.push(`Previous conversation topics: ${topics.join(', ')}`);
+      }
+    }
+
+    // Format conversation history
+    contextLines.push('\nRecent conversation history:');
+    
+    historyData.history.forEach((msg, index) => {
+      const isRecent = index >= historyData.history.length - 2; // Last 2 messages
+      const weight = prioritizeRecent && isRecent ? '[RECENT] ' : '';
+      const timestamp = includeTimestamps ? 
+        `[${new Date(msg.timestamp).toLocaleTimeString()}] ` : '';
+      
+      const role = msg.type === 'user' ? 'Human' : 'Assistant';
+      const content = msg.content.length > 200 ? 
+        msg.content.substring(0, 200) + '...' : msg.content;
+      
+      contextLines.push(`${weight}${timestamp}${role}: ${content}`);
+    });
+
+    return contextLines.join('\n');
   }
 
   /**
@@ -257,12 +423,16 @@ Do NOT use information from any other data sources not explicitly listed above.`
    * Invoke Bedrock Agent with enhanced query processing and data source filtering
    * @param {string} query - User query
    * @param {string} sessionId - Session ID for conversation continuity
-   * @param {Object} options - Additional options including dataSources filter, inference parameters
+   * @param {Object} options - Additional options including dataSources filter, inference parameters, history settings
    * @param {string} options.model - Model to use for inference
    * @param {number} options.temperature - Temperature for response generation (0.0-1.0)
    * @param {number} options.topP - Top P for nucleus sampling (0.0-1.0)
    * @param {string} options.systemPrompt - Custom system prompt for the agent
    * @param {Object} options.dataSources - Data source filtering options
+   * @param {Object} options.history - Conversation history options
+   * @param {boolean} options.history.enabled - Whether to include conversation history (default: true)
+   * @param {number} options.history.maxMessages - Maximum number of previous messages to include (default: 6)
+   * @param {string} options.history.contextWeight - Context weight: 'light', 'balanced', 'heavy' (default: 'balanced')
    * @returns {Promise<Object>} - Agent response
    */
   async invokeAgent(query, sessionId = null, options = {}) {
@@ -272,11 +442,44 @@ Do NOT use information from any other data sources not explicitly listed above.`
         throw new Error('BEDROCK_AGENT_ID is not configured. Please set up a Bedrock Agent first.');
       }
 
+      const startTime = Date.now();
+
       // Get or create session
       const session = this.getOrCreateSession(sessionId, options.sessionConfig);
       
+      // Store user message in conversation history
+      this.addToConversationHistory(session.id, {
+        type: 'user',
+        content: query,
+        metadata: {
+          hasDataSourceFilters: !!options.dataSources,
+          hasCustomModel: !!options.model,
+          hasSystemPrompt: !!options.systemPrompt,
+          temperature: options.temperature,
+          topP: options.topP,
+          timestamp: new Date().toISOString()
+        }
+      });
+      
       // Analyze query and determine approach
       const analysis = this.analyzeQuery(query, session.context);
+      
+      // Build conversation context if enabled
+      const historyOptions = {
+        enabled: true,
+        maxMessages: 6,
+        contextWeight: 'balanced',
+        ...options.history
+      };
+      
+      let conversationContext = null;
+      if (historyOptions.enabled && session.conversationHistory.length > 1) {
+        conversationContext = this.buildConversationContext(session.id, {
+          maxMessages: historyOptions.maxMessages,
+          contextWeight: historyOptions.contextWeight,
+          prioritizeRecent: true
+        });
+      }
       
       logger.info(`Invoking Bedrock Agent for query analysis:`, {
         sessionId: session.id,
@@ -284,16 +487,30 @@ Do NOT use information from any other data sources not explicitly listed above.`
         interactionStyle: analysis.interactionStyle,
         confidence: analysis.confidence,
         messageCount: session.messageCount,
+        conversationHistoryLength: session.conversationHistory.length,
+        hasConversationContext: !!conversationContext,
         hasDataSourceFilters: !!options.dataSources,
         hasCustomModel: !!options.model,
         hasSystemPrompt: !!options.systemPrompt,
         temperature: options.temperature,
-        topP: options.topP
+        topP: options.topP,
+        historyEnabled: historyOptions.enabled
       });
 
       // Apply data source filtering to the query if specified
       let enhancedQuery = options.useEnhancement !== false ? 
         analysis.queryEnhancement : query;
+
+      // Add conversation context to enhance query with history
+      if (conversationContext) {
+        enhancedQuery = `CONVERSATION CONTEXT:
+${conversationContext}
+
+CURRENT QUERY: ${enhancedQuery}
+
+Please answer the current query while being aware of the conversation context above. Prioritize the current query but use the conversation history to provide more relevant and coherent responses.`;
+        logger.info('Applied conversation context to query');
+      }
 
       // Apply system prompt if provided
       if (options.systemPrompt) {
@@ -406,14 +623,40 @@ Do NOT use information from any other data sources not explicitly listed above.`
         responseLength: agentResponse.text?.length || 0,
         citationCount: agentResponse.citations?.length || 0,
         traceAvailable: !!agentResponse.trace,
-        filtersApplied: !!options.dataSources
+        filtersApplied: !!options.dataSources,
+        conversationContextUsed: !!conversationContext
+      });
+
+      const responseTime = Date.now() - startTime;
+
+      // Store assistant response in conversation history
+      this.addToConversationHistory(session.id, {
+        type: 'assistant',
+        content: agentResponse.text || '',
+        responseTime: responseTime,
+        tokensUsed: agentResponse.tokensUsed || 0,
+        metadata: {
+          citationCount: agentResponse.citations?.length || 0,
+          hasTrace: !!agentResponse.trace,
+          filtersApplied: !!options.dataSources,
+          conversationContextUsed: !!conversationContext,
+          inferenceParams: {
+            temperature: options.temperature,
+            topP: options.topP,
+            model: options.model,
+            hasSystemPrompt: !!options.systemPrompt
+          },
+          timestamp: new Date().toISOString()
+        }
       });
 
       return this.buildFinalResponse(session, agentResponse, analysis, options.dataSources, {
         temperature: options.temperature,
         topP: options.topP,
         model: options.model,
-        systemPrompt: options.systemPrompt
+        systemPrompt: options.systemPrompt,
+        conversationContextUsed: !!conversationContext,
+        historyOptions: historyOptions
       });
 
     } catch (error) {
@@ -843,6 +1086,12 @@ Do NOT use information from any other data sources not explicitly listed above.`
       session.context.topics = session.context.topics.slice(-10);
     }
 
+    // Get current conversation history for response
+    const currentHistory = this.getConversationHistory(session.id, { 
+      limit: 10, 
+      includeMetadata: false 
+    });
+
     return {
       sessionId: session.id,
       answer: agentResponse.text || '',
@@ -852,7 +1101,14 @@ Do NOT use information from any other data sources not explicitly listed above.`
       session: {
         messageCount: session.messageCount,
         topics: session.context.topics,
-        interactionStyle: analysis.interactionStyle
+        interactionStyle: analysis.interactionStyle,
+        // Enhanced session information with conversation history
+        conversationHistory: {
+          totalMessages: currentHistory.totalMessages,
+          recentMessages: currentHistory.history?.slice(-4) || [], // Last 4 messages
+          sessionAge: Date.now() - session.createdAt,
+          avgResponseTime: session.historyMetadata?.avgResponseTime || 0
+        }
       },
       metadata: {
         agentId: this.agentId,
@@ -861,6 +1117,8 @@ Do NOT use information from any other data sources not explicitly listed above.`
         tokensUsed: agentResponse.tokensUsed,
         timestamp: new Date().toISOString(),
         dataSourcesUsed: dataSources || [],
+        conversationContextUsed: inferenceParams.conversationContextUsed || false,
+        historySettings: inferenceParams.historyOptions || {},
         inferenceParameters: {
           temperature: inferenceParams.temperature,
           topP: inferenceParams.topP,

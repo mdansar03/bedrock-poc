@@ -336,9 +336,13 @@ router.post('/query', [
     .withMessage('Message must be between 1 and 2000 characters')
     .trim(),
   body('sessionId')
-    .optional()
-    .isString()
-    .withMessage('Session ID must be a string'),
+    .custom((value) => {
+      // Allow null, undefined, or string values
+      if (value === null || value === undefined || typeof value === 'string') {
+        return true;
+      }
+      throw new Error('Session ID must be a string or null');
+    }),
   body('model')
     .optional()
     .isString()

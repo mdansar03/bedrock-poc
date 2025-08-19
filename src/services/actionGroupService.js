@@ -371,6 +371,7 @@ Current error: ${error.message}`);
     // Try to extract from agent service role if available
     if (process.env.BEDROCK_AGENT_SERVICE_ROLE) {
       const match = process.env.BEDROCK_AGENT_SERVICE_ROLE.match(/arn:aws:iam::(\d+):/);
+      console.log('match===>', match);
       if (match) {
         return match[1];
       }
