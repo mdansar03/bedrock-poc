@@ -1,8 +1,8 @@
-const express = require('express');
-const { body, validationResult, query } = require('express-validator');
-const bedrockService = require('../services/bedrockService');
-const bedrockAgentService = require('../services/bedrockAgentService');
-const logger = require('../utils/logger');
+const express = require("express");
+const { body, validationResult, query } = require("express-validator");
+const bedrockService = require("../services/bedrockService");
+const bedrockAgentService = require("../services/bedrockAgentService");
+const logger = require("../utils/logger");
 
 const router = express.Router();
 
@@ -54,24 +54,23 @@ const router = express.Router();
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/models', async (req, res) => {
+router.get("/models", async (req, res) => {
   try {
     const models = bedrockService.getAvailableModels();
-    
+
     res.json({
       success: true,
       data: {
         models,
-        defaultModel: bedrockService.defaultModelId
-      }
+        defaultModel: bedrockService.defaultModelId,
+      },
     });
-
   } catch (error) {
-    logger.error('Error fetching models:', error);
+    logger.error("Error fetching models:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch available models',
-      details: error.message
+      error: "Failed to fetch available models",
+      details: error.message,
     });
   }
 });
@@ -160,63 +159,73 @@ router.get('/models', async (req, res) => {
  *                                 type: number
  *                               example: [0, 1]
  */
-router.get('/enhancement-options', (req, res) => {
+router.get("/enhancement-options", (req, res) => {
   res.json({
     success: true,
     data: {
       responseTypes: {
         auto: {
-          description: 'Automatically detect query intent and optimize response style',
-          default: true
+          description:
+            "Automatically detect query intent and optimize response style",
+          default: true,
         },
         general: {
-          description: 'General-purpose responses with balanced detail and structure',
-          default: false
+          description:
+            "General-purpose responses with balanced detail and structure",
+          default: false,
         },
         technical: {
-          description: 'Technical responses with code examples and implementation details',
-          default: false
+          description:
+            "Technical responses with code examples and implementation details",
+          default: false,
         },
         business: {
-          description: 'Business-focused responses with strategic insights and ROI considerations',
-          default: false
-        }
+          description:
+            "Business-focused responses with strategic insights and ROI considerations",
+          default: false,
+        },
       },
       options: {
         includeExamples: {
-          type: 'boolean',
+          type: "boolean",
           default: true,
-          description: 'Include relevant examples, code snippets, or use cases in responses'
+          description:
+            "Include relevant examples, code snippets, or use cases in responses",
         },
         requestElaboration: {
-          type: 'boolean',
+          type: "boolean",
           default: true,
-          description: 'Request detailed explanations with comprehensive context'
+          description:
+            "Request detailed explanations with comprehensive context",
         },
         structureResponse: {
-          type: 'boolean',
+          type: "boolean",
           default: true,
-          description: 'Structure responses with clear sections and organized formatting'
+          description:
+            "Structure responses with clear sections and organized formatting",
         },
         includeContext: {
-          type: 'boolean',
+          type: "boolean",
           default: true,
-          description: 'Include relevant background context and related information'
+          description:
+            "Include relevant background context and related information",
         },
         maxTokens: {
-          type: 'number',
+          type: "number",
           default: 2000,
           range: [100, 4000],
-          description: 'Maximum number of tokens for response generation (direct model only)'
+          description:
+            "Maximum number of tokens for response generation (direct model only)",
         },
         temperature: {
-          type: 'number',
+          type: "number",
           default: 0.7,
           range: [0, 1],
-          description: 'Response creativity level - lower for focused answers, higher for creative responses'
-        }
-      }
-    }
+          description:
+            "Response creativity level - lower for focused answers, higher for creative responses",
+        },
+      },
+    },
   });
 });
 
@@ -329,283 +338,309 @@ router.get('/enhancement-options', (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/query', [
-  body('message')
-    .isString()
-    .isLength({ min: 1, max: 2000 })
-    .withMessage('Message must be between 1 and 2000 characters')
-    .trim(),
-  body('sessionId')
-    .custom((value) => {
-      // Allow null, undefined, or string values
-      if (value === null || value === undefined || typeof value === 'string') {
-        return true;
-      }
-      throw new Error('Session ID must be a string or null');
-    }),
-  body('model')
-    .optional()
-    .isString()
-    .withMessage('Model must be a string'),
-  body('useAgent')
-    .optional()
-    .isBoolean()
-    .withMessage('Use agent must be a boolean'),
-  body('enhancementOptions')
-    .optional()
-    .isObject()
-    .withMessage('Enhancement options must be an object'),
-  body('enhancementOptions.responseType')
-    .optional()
-    .isIn(['auto', 'general', 'technical', 'business'])
-    .withMessage('Response type must be auto, general, technical, or business'),
-  body('enhancementOptions.includeExamples')
-    .optional()
-    .isBoolean()
-    .withMessage('Include examples must be a boolean'),
-  body('enhancementOptions.requestElaboration')
-    .optional()
-    .isBoolean()
-    .withMessage('Request elaboration must be a boolean'),
-  body('enhancementOptions.structureResponse')
-    .optional()
-    .isBoolean()
-    .withMessage('Structure response must be a boolean')
-], async (req, res) => {
-  try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        details: errors.array()
-      });
-    }
-
-    const { 
-      message, 
-      sessionId = null, 
-      model = null, 
-      useAgent = process.env.BEDROCK_AGENT_ID ? true : false, // Default to agent if available
-      enhancementOptions = {} 
-    } = req.body;
-
-    logger.info(`Received chat query: ${message.substring(0, 100)}...`);
-    logger.info(`Using ${useAgent ? 'Agent' : 'Direct Knowledge Base'} approach`);
-    
-    if (model) {
-      logger.info(`Using model: ${model}`);
-    }
-    if (Object.keys(enhancementOptions).length > 0) {
-      logger.info(`Enhancement options:`, enhancementOptions);
-    }
-
-    let response;
-
-    if (useAgent) {
-      // Use Bedrock Agent for intelligent knowledge retrieval
-      try {
-        const agentResponse = await bedrockAgentService.invokeAgent(message, sessionId, {
-          useEnhancement: enhancementOptions.useEnhancement !== false,
-          sessionConfig: enhancementOptions.sessionConfig || {}
+router.post(
+  "/query",
+  [
+    body("message")
+      .isString()
+      .isLength({ min: 1, max: 2000 })
+      .withMessage("Message must be between 1 and 2000 characters")
+      .trim(),
+    body("sessionId")
+      .optional()
+      .isString()
+      .withMessage("Session ID must be a string"),
+    body("model").optional().isString().withMessage("Model must be a string"),
+    body("useAgent")
+      .optional()
+      .isBoolean()
+      .withMessage("Use agent must be a boolean"),
+    body("enhancementOptions")
+      .optional()
+      .isObject()
+      .withMessage("Enhancement options must be an object"),
+    body("enhancementOptions.responseType")
+      .optional()
+      .isIn(["auto", "general", "technical", "business"])
+      .withMessage(
+        "Response type must be auto, general, technical, or business"
+      ),
+    body("enhancementOptions.includeExamples")
+      .optional()
+      .isBoolean()
+      .withMessage("Include examples must be a boolean"),
+    body("enhancementOptions.requestElaboration")
+      .optional()
+      .isBoolean()
+      .withMessage("Request elaboration must be a boolean"),
+    body("enhancementOptions.structureResponse")
+      .optional()
+      .isBoolean()
+      .withMessage("Structure response must be a boolean"),
+  ],
+  async (req, res) => {
+    try {
+      // Check for validation errors
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: errors.array(),
         });
+      }
 
-        response = {
-          answer: agentResponse.answer,
-          sources: (agentResponse.citations || []).map(citation => {
-            // Handle different citation formats
-            if (citation.retrievedReferences) {
-              // Standard citation format
-              return {
-                content: citation.generatedResponsePart?.textResponsePart?.text || '',
-                metadata: citation.retrievedReferences || [],
-                documentId: citation.retrievedReferences?.[0]?.location?.s3Location?.uri || '',
-                relevanceScore: citation.retrievedReferences?.[0]?.metadata?.score || 0
-              };
-            } else {
-              // Fallback format
-              return {
-                content: citation.content || citation.text || '',
-                metadata: citation.metadata || {},
-                documentId: citation.documentId || '',
-                relevanceScore: citation.score || 0
-              };
+      const {
+        message,
+        sessionId = null,
+        model = null,
+        useAgent = process.env.BEDROCK_AGENT_ID ? true : false, // Default to agent if available
+        enhancementOptions = {},
+      } = req.body;
+
+      logger.info(`Received chat query: ${message.substring(0, 100)}...`);
+      logger.info(
+        `Using ${useAgent ? "Agent" : "Direct Knowledge Base"} approach`
+      );
+
+      if (model) {
+        logger.info(`Using model: ${model}`);
+      }
+      if (Object.keys(enhancementOptions).length > 0) {
+        logger.info(`Enhancement options:`, enhancementOptions);
+      }
+
+      let response;
+
+      if (useAgent) {
+        // Use Bedrock Agent for intelligent knowledge retrieval
+        try {
+          const agentResponse = await bedrockAgentService.invokeAgent(
+            message,
+            sessionId,
+            {
+              useEnhancement: enhancementOptions.useEnhancement !== false,
+              sessionConfig: enhancementOptions.sessionConfig || {},
             }
-          }),
-          sessionId: agentResponse.sessionId,
-          model: agentResponse.metadata?.agentId || 'agent',
-          agentMetadata: {
-            analysis: agentResponse.analysis,
-            session: agentResponse.session,
-            agentId: agentResponse.metadata?.agentId,
-            responseTime: agentResponse.metadata?.responseTime,
-            tokensUsed: agentResponse.metadata?.tokensUsed
-          },
-          method: 'agent'
-        };
-      } catch (agentError) {
-        logger.warn('Agent call failed, falling back to direct knowledge base:', agentError.message);
-        
-        // Fallback to direct knowledge base if agent fails
-        const kbResponse = await bedrockService.queryKnowledgeBase(message, sessionId, model, enhancementOptions);
+          );
+
+          response = {
+            answer: agentResponse.answer,
+            sources: (agentResponse.citations || []).map((citation) => {
+              // Handle different citation formats
+              if (citation.retrievedReferences) {
+                // Standard citation format
+                return {
+                  content:
+                    citation.generatedResponsePart?.textResponsePart?.text ||
+                    "",
+                  metadata: citation.retrievedReferences || [],
+                  documentId:
+                    citation.retrievedReferences?.[0]?.location?.s3Location
+                      ?.uri || "",
+                  relevanceScore:
+                    citation.retrievedReferences?.[0]?.metadata?.score || 0,
+                };
+              } else {
+                // Fallback format
+                return {
+                  content: citation.content || citation.text || "",
+                  metadata: citation.metadata || {},
+                  documentId: citation.documentId || "",
+                  relevanceScore: citation.score || 0,
+                };
+              }
+            }),
+            sessionId: agentResponse.sessionId,
+            model: agentResponse.metadata?.agentId || "agent",
+            agentMetadata: {
+              analysis: agentResponse.analysis,
+              session: agentResponse.session,
+              agentId: agentResponse.metadata?.agentId,
+              responseTime: agentResponse.metadata?.responseTime,
+              tokensUsed: agentResponse.metadata?.tokensUsed,
+            },
+            method: "agent",
+          };
+        } catch (agentError) {
+          logger.warn(
+            "Agent call failed, falling back to direct knowledge base:",
+            agentError.message
+          );
+
+          // Fallback to direct knowledge base if agent fails
+          const kbResponse = await bedrockService.queryKnowledgeBase(
+            message,
+            sessionId,
+            model,
+            enhancementOptions
+          );
+          response = {
+            answer: kbResponse.answer,
+            sources: kbResponse.sources,
+            sessionId: kbResponse.sessionId,
+            model: bedrockService.getModelId(model),
+            method: "knowledge_base_fallback",
+            fallbackReason: agentError.message,
+          };
+        }
+      } else {
+        // Use direct knowledge base query
+        const kbResponse = await bedrockService.queryKnowledgeBase(
+          message,
+          sessionId,
+          model,
+          enhancementOptions
+        );
         response = {
           answer: kbResponse.answer,
           sources: kbResponse.sources,
           sessionId: kbResponse.sessionId,
           model: bedrockService.getModelId(model),
-          method: 'knowledge_base_fallback',
-          fallbackReason: agentError.message
+          method: "knowledge_base",
         };
       }
-    } else {
-      // Use direct knowledge base query
-      const kbResponse = await bedrockService.queryKnowledgeBase(message, sessionId, model, enhancementOptions);
-      response = {
-        answer: kbResponse.answer,
-        sources: kbResponse.sources,
-        sessionId: kbResponse.sessionId,
-        model: bedrockService.getModelId(model),
-        method: 'knowledge_base'
-      };
-    }
 
-    res.json({
-      success: true,
-      data: {
-        ...response,
-        timestamp: new Date().toISOString()
+      res.json({
+        success: true,
+        data: {
+          ...response,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      logger.error("Chat query error:", error);
+
+      // Check if this is a rate limiting error
+      const isRateLimitError =
+        error.message?.includes("rate limiting") ||
+        error.message?.includes("too high") ||
+        error.message?.includes("throttling");
+
+      if (isRateLimitError) {
+        const queueStatus = bedrockService.getQueueStatus();
+        return res.status(429).json({
+          success: false,
+          error: "Rate limit exceeded",
+          message: "Too many requests. Please wait and try again.",
+          retryAfter: Math.ceil(queueStatus.minInterval / 1000), // seconds
+          queueInfo: {
+            position: queueStatus.queueLength + 1,
+            estimatedWait: queueStatus.queueLength * queueStatus.minInterval,
+          },
+        });
       }
-    });
 
-  } catch (error) {
-    logger.error('Chat query error:', error);
-    
-    // Check if this is a rate limiting error
-    const isRateLimitError = error.message?.includes('rate limiting') || 
-                            error.message?.includes('too high') ||
-                            error.message?.includes('throttling');
-    
-    if (isRateLimitError) {
-      const queueStatus = bedrockService.getQueueStatus();
-      return res.status(429).json({
+      res.status(500).json({
         success: false,
-        error: 'Rate limit exceeded',
-        message: 'Too many requests. Please wait and try again.',
-        retryAfter: Math.ceil(queueStatus.minInterval / 1000), // seconds
-        queueInfo: {
-          position: queueStatus.queueLength + 1,
-          estimatedWait: queueStatus.queueLength * queueStatus.minInterval
-        }
+        error: "Failed to process chat query",
+        message: error.message,
       });
     }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Failed to process chat query',
-      message: error.message
-    });
   }
-});
+);
 
 /**
  * Direct model invocation (without RAG)
  * POST /api/chat/direct
  */
-router.post('/direct', [
-  body('prompt')
-    .isString()
-    .isLength({ min: 1, max: 2000 })
-    .withMessage('Prompt must be between 1 and 2000 characters')
-    .trim(),
-  body('model')
-    .optional()
-    .isString()
-    .withMessage('Model must be a string'),
-  body('enhancementOptions')
-    .optional()
-    .isObject()
-    .withMessage('Enhancement options must be an object')
-], async (req, res) => {
-  try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        details: errors.array()
-      });
-    }
-
-    const { 
-      prompt, 
-      model = null, 
-      enhancementOptions = {} 
-    } = req.body;
-
-    logger.info(`Received direct model query: ${prompt.substring(0, 100)}...`);
-    if (model) {
-      logger.info(`Using model: ${model}`);
-    }
-    if (Object.keys(enhancementOptions).length > 0) {
-      logger.info(`Enhancement options:`, enhancementOptions);
-    }
-
-    // Invoke model directly with enhancements
-    const response = await bedrockService.invokeModel(prompt, model, enhancementOptions);
-
-    res.json({
-      success: true,
-      data: {
-        answer: response,
-        timestamp: new Date().toISOString()
+router.post(
+  "/direct",
+  [
+    body("prompt")
+      .isString()
+      .isLength({ min: 1, max: 2000 })
+      .withMessage("Prompt must be between 1 and 2000 characters")
+      .trim(),
+    body("model").optional().isString().withMessage("Model must be a string"),
+    body("enhancementOptions")
+      .optional()
+      .isObject()
+      .withMessage("Enhancement options must be an object"),
+  ],
+  async (req, res) => {
+    try {
+      // Check for validation errors
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: errors.array(),
+        });
       }
-    });
 
-  } catch (error) {
-    logger.error('Direct model query error:', error);
-    
-    // Check if this is a rate limiting error
-    const isRateLimitError = error.message?.includes('rate limiting') || 
-                            error.message?.includes('too high') ||
-                            error.message?.includes('throttling');
-    
-    if (isRateLimitError) {
-      const queueStatus = bedrockService.getQueueStatus();
-      return res.status(429).json({
+      const { prompt, model = null, enhancementOptions = {} } = req.body;
+
+      logger.info(
+        `Received direct model query: ${prompt.substring(0, 100)}...`
+      );
+      if (model) {
+        logger.info(`Using model: ${model}`);
+      }
+      if (Object.keys(enhancementOptions).length > 0) {
+        logger.info(`Enhancement options:`, enhancementOptions);
+      }
+
+      // Invoke model directly with enhancements
+      const response = await bedrockService.invokeModel(
+        prompt,
+        model,
+        enhancementOptions
+      );
+
+      res.json({
+        success: true,
+        data: {
+          answer: response,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      logger.error("Direct model query error:", error);
+
+      // Check if this is a rate limiting error
+      const isRateLimitError =
+        error.message?.includes("rate limiting") ||
+        error.message?.includes("too high") ||
+        error.message?.includes("throttling");
+
+      if (isRateLimitError) {
+        const queueStatus = bedrockService.getQueueStatus();
+        return res.status(429).json({
+          success: false,
+          error: "Rate limit exceeded",
+          message: "Too many requests. Please wait and try again.",
+          retryAfter: Math.ceil(queueStatus.minInterval / 1000), // seconds
+          queueInfo: {
+            position: queueStatus.queueLength + 1,
+            estimatedWait: queueStatus.queueLength * queueStatus.minInterval,
+          },
+        });
+      }
+
+      res.status(500).json({
         success: false,
-        error: 'Rate limit exceeded',
-        message: 'Too many requests. Please wait and try again.',
-        retryAfter: Math.ceil(queueStatus.minInterval / 1000), // seconds
-        queueInfo: {
-          position: queueStatus.queueLength + 1,
-          estimatedWait: queueStatus.queueLength * queueStatus.minInterval
-        }
+        error: "Failed to process direct query",
+        message: error.message,
       });
     }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Failed to process direct query',
-      message: error.message
-    });
   }
-});
+);
 
 /**
  * Get chat session info
  * GET /api/chat/session/:sessionId
  */
-router.get('/session/:sessionId', (req, res) => {
+router.get("/session/:sessionId", (req, res) => {
   const { sessionId } = req.params;
-  
+
   res.json({
     success: true,
     data: {
       sessionId,
-      status: 'active',
+      status: "active",
       createdAt: new Date().toISOString(),
-      messageCount: 0 // Placeholder - would track in real implementation
-    }
+      messageCount: 0, // Placeholder - would track in real implementation
+    },
   });
 });
 
@@ -613,71 +648,87 @@ router.get('/session/:sessionId', (req, res) => {
  * Test connectivity (both knowledge base and agent)
  * GET /api/chat/test
  */
-router.get('/test', async (req, res) => {
+router.get("/test", async (req, res) => {
   try {
     const testQuery = "What information is available in the knowledge base?";
-    const useAgent = req.query.useAgent === 'true' || process.env.BEDROCK_AGENT_ID ? true : false;
-    
-    logger.info(`Testing ${useAgent ? 'agent' : 'knowledge base'} connectivity...`);
-    
+    const useAgent =
+      req.query.useAgent === "true" || process.env.BEDROCK_AGENT_ID
+        ? true
+        : false;
+
+    logger.info(
+      `Testing ${useAgent ? "agent" : "knowledge base"} connectivity...`
+    );
+
     let response;
     let method;
 
     if (useAgent) {
       try {
-        const agentResponse = await bedrockAgentService.invokeAgent(testQuery, 'test-agent-session');
+        const agentResponse = await bedrockAgentService.invokeAgent(
+          testQuery,
+          "test-agent-session"
+        );
         response = {
           query: testQuery,
           answer: agentResponse.answer,
           sources: agentResponse.citations,
           sessionId: agentResponse.sessionId,
-          agentMetadata: agentResponse.metadata
+          agentMetadata: agentResponse.metadata,
         };
-        method = 'agent';
+        method = "agent";
       } catch (agentError) {
-        logger.warn('Agent test failed, testing knowledge base:', agentError.message);
-        const kbResponse = await bedrockService.queryKnowledgeBase(testQuery, 'test-kb-session');
+        logger.warn(
+          "Agent test failed, testing knowledge base:",
+          agentError.message
+        );
+        const kbResponse = await bedrockService.queryKnowledgeBase(
+          testQuery,
+          "test-kb-session"
+        );
         response = {
           query: testQuery,
           answer: kbResponse.answer,
           sources: kbResponse.sources,
           sessionId: kbResponse.sessionId,
-          fallbackReason: agentError.message
+          fallbackReason: agentError.message,
         };
-        method = 'knowledge_base_fallback';
+        method = "knowledge_base_fallback";
       }
     } else {
-      const kbResponse = await bedrockService.queryKnowledgeBase(testQuery, 'test-kb-session');
+      const kbResponse = await bedrockService.queryKnowledgeBase(
+        testQuery,
+        "test-kb-session"
+      );
       response = {
         query: testQuery,
         answer: kbResponse.answer,
         sources: kbResponse.sources,
-        sessionId: kbResponse.sessionId
+        sessionId: kbResponse.sessionId,
       };
-      method = 'knowledge_base';
+      method = "knowledge_base";
     }
-    
+
     res.json({
       success: true,
-      message: `${method.replace('_', ' ')} test successful`,
+      message: `${method.replace("_", " ")} test successful`,
       method,
       data: {
         ...response,
-        timestamp: new Date().toISOString()
-      }
+        timestamp: new Date().toISOString(),
+      },
     });
-    
   } catch (error) {
-    logger.error('Connectivity test failed:', error);
+    logger.error("Connectivity test failed:", error);
     res.status(500).json({
       success: false,
-      error: 'Connectivity test failed',
+      error: "Connectivity test failed",
       message: error.message,
       details: {
         knowledgeBaseId: process.env.BEDROCK_KNOWLEDGE_BASE_ID,
         agentId: process.env.BEDROCK_AGENT_ID,
-        region: process.env.AWS_REGION
-      }
+        region: process.env.AWS_REGION,
+      },
     });
   }
 });
@@ -686,23 +737,23 @@ router.get('/test', async (req, res) => {
  * Get available models
  * GET /api/chat/models
  */
-router.get('/models', (req, res) => {
+router.get("/models", (req, res) => {
   res.json({
     success: true,
     models: [
       {
-        id: 'anthropic.claude-3-sonnet-20240229-v1:0',
-        name: 'Claude 3 Sonnet',
-        description: 'High-performance model for complex reasoning',
-        default: true
+        id: "anthropic.claude-3-sonnet-20240229-v1:0",
+        name: "Claude 3 Sonnet",
+        description: "High-performance model for complex reasoning",
+        default: true,
       },
       {
-        id: 'anthropic.claude-3-haiku-20240307-v1:0',
-        name: 'Claude 3 Haiku',
-        description: 'Fast and efficient model for quick responses',
-        default: false
-      }
-    ]
+        id: "anthropic.claude-3-haiku-20240307-v1:0",
+        name: "Claude 3 Haiku",
+        description: "Fast and efficient model for quick responses",
+        default: false,
+      },
+    ],
   });
 });
 
@@ -710,37 +761,93 @@ router.get('/models', (req, res) => {
  * Get Bedrock service status and rate limiting information
  * GET /api/chat/status
  */
-router.get('/status', (req, res) => {
+router.get("/status", (req, res) => {
   try {
     const queueStatus = bedrockService.getQueueStatus();
     const isRateLimited = bedrockService.isRateLimited();
-    
+
     res.json({
       success: true,
       data: {
-        status: isRateLimited ? 'rate-limited' : 'ready',
+        status: isRateLimited ? "rate-limited" : "ready",
         isRateLimited,
         queue: {
           length: queueStatus.queueLength,
           running: queueStatus.runningRequests,
           maxConcurrent: queueStatus.maxConcurrent,
-          minInterval: queueStatus.minInterval
+          minInterval: queueStatus.minInterval,
         },
         timing: {
           lastRequestTime: queueStatus.lastRequestTime,
           timeSinceLastRequest: queueStatus.timeSinceLastRequest,
-          canMakeRequest: queueStatus.timeSinceLastRequest >= queueStatus.minInterval
+          canMakeRequest:
+            queueStatus.timeSinceLastRequest >= queueStatus.minInterval,
         },
         retryConfig: queueStatus.retryConfig,
-        timestamp: new Date().toISOString()
-      }
+        timestamp: new Date().toISOString(),
+      },
     });
   } catch (error) {
-    logger.error('Error getting Bedrock status:', error);
+    logger.error("Error getting Bedrock status:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get service status',
-      message: error.message
+      error: "Failed to get service status",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Bedrock Agent invocation (if you have a separate endpoint for agent)
+ * POST /api/chat/agent
+ */
+router.post("/agent", async (req, res) => {
+  try {
+    // Validate request body
+    const {
+      message,
+      sessionId,
+      options = {},
+      dataSources,
+      agentAliasId,
+    } = req.body;
+    if (
+      !message ||
+      typeof message !== "string" ||
+      message.length < 1 ||
+      message.length > 2000
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid message",
+        message: "Message must be a string between 1 and 2000 characters",
+      });
+    }
+
+    // Pass agentAliasId to the service if provided
+    const invokeOptions = { ...options };
+    if (agentAliasId) {
+      invokeOptions.agentAliasId = agentAliasId;
+    }
+
+    // Invoke the agent
+    const response = await bedrockAgentService.invokeAgent(
+      message,
+      sessionId,
+      invokeOptions,
+      dataSources
+    );
+
+    res.json({
+      success: true,
+      data: response,
+    });
+  } catch (error) {
+    logger.error("Agent invocation error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to invoke agent",
+      message: error.message,
     });
   }
 });

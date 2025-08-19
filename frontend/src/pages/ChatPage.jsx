@@ -1,141 +1,164 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { MessageCircle, Send, User, Bot, Loader, ExternalLink, TestTube, Settings, Zap, Globe, FileText, File } from 'lucide-react'
-import { chatAPI, agentAPI } from '../utils/api'
-import DataSourceSelector from '../components/DataSourceSelector'
+import React, { useState, useRef, useEffect } from "react";
+import {
+  MessageCircle,
+  Send,
+  User,
+  Bot,
+  Loader,
+  ExternalLink,
+  TestTube,
+  Settings,
+  Zap,
+  Globe,
+  FileText,
+  File,
+} from "lucide-react";
+import { chatAPI, agentAPI, getLatestAgentAlias } from "../utils/api";
+import DataSourceSelector from "../components/DataSourceSelector";
 
 const ChatPage = () => {
   const [messages, setMessages] = useState([
     {
       id: 1,
-      type: 'bot',
-      content: 'Hello! I\'m your AI assistant. I can help you find information from the websites you\'ve scraped. What would you like to know?',
-      timestamp: new Date().toISOString()
-    }
-  ])
-  const [inputMessage, setInputMessage] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [sessionId, setSessionId] = useState(null)
-  const [selectedModel, setSelectedModel] = useState(null)
-  const [availableModels, setAvailableModels] = useState({})
-  const [useAgent, setUseAgent] = useState(true) // Default to agent if available
-  const [agentInfo, setAgentInfo] = useState(null)
+      type: "bot",
+      content:
+        "Hello! I'm your AI assistant. I can help you find information from the websites you've scraped. What would you like to know?",
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [availableModels, setAvailableModels] = useState({});
+  const [useAgent, setUseAgent] = useState(true); // Default to agent if available
+  const [agentInfo, setAgentInfo] = useState(null);
   const [enhancementOptions, setEnhancementOptions] = useState({
     includeExamples: true,
     requestElaboration: true,
-    structureResponse: true
-  })
-  const [showSettings, setShowSettings] = useState(false)
+    structureResponse: true,
+  });
+  const [showSettings, setShowSettings] = useState(false);
   const [selectedDataSources, setSelectedDataSources] = useState({
     websites: [],
     pdfs: [],
-    documents: []
-  })
-  
-  const messagesEndRef = useRef(null)
-  const inputRef = useRef(null)
+    documents: [],
+  });
+
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+    scrollToBottom();
+  }, [messages]);
 
   useEffect(() => {
-    loadAvailableModels()
-    checkAgentAvailability()
-  }, [])
+    loadAvailableModels();
+    checkAgentAvailability();
+  }, []);
 
   const loadAvailableModels = async () => {
     try {
-      const response = await chatAPI.getModels()
-      setAvailableModels(response.data.models)
-      setSelectedModel(response.data.defaultModel)
+      const response = await chatAPI.getModels();
+      setAvailableModels(response.data.models);
+      setSelectedModel(response.data.defaultModel);
     } catch (error) {
-      console.error('Failed to load available models:', error)
+      console.error("Failed to load available models:", error);
     }
-  }
+  };
 
   const checkAgentAvailability = async () => {
     try {
-      const response = await agentAPI.getInfo()
+      const response = await agentAPI.getInfo();
       if (response.success && response.data.agent.configured) {
-        setAgentInfo(response.data.agent)
-        setUseAgent(true)
+        setAgentInfo(response.data.agent);
+        setUseAgent(true);
       } else {
-        setUseAgent(false)
+        setUseAgent(false);
       }
     } catch (error) {
-      console.warn('Agent not available, falling back to direct knowledge base:', error)
-      setUseAgent(false)
+      console.warn(
+        "Agent not available, falling back to direct knowledge base:",
+        error
+      );
+      setUseAgent(false);
     }
-  }
+  };
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   const handleConnectivityTest = async () => {
-    setLoading(true)
-    
+    setLoading(true);
+
     const testMessage = {
       id: Date.now(),
-      type: 'user',
-      content: `Testing ${useAgent ? 'agent' : 'knowledge base'} connectivity...`,
-      timestamp: new Date().toISOString()
-    }
-    
-    setMessages(prev => [...prev, testMessage])
-    
+      type: "user",
+      content: `Testing ${
+        useAgent ? "agent" : "knowledge base"
+      } connectivity...`,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, testMessage]);
+
     try {
-      const response = useAgent ? 
-        await agentAPI.test() : 
-        await chatAPI.testKnowledgeBase()
-      
+      const response = useAgent
+        ? await agentAPI.test()
+        : await chatAPI.testKnowledgeBase();
+
       const botMessage = {
         id: Date.now() + 1,
-        type: 'bot',
-        content: `${useAgent ? 'Agent' : 'Knowledge Base'} Test Result:\n\n${response.data.answer || response.data.response}`,
+        type: "bot",
+        content: `${useAgent ? "Agent" : "Knowledge Base"} Test Result:\n\n${
+          response.data.answer || response.data.response
+        }`,
         sources: response.data.sources || response.data.citations,
         timestamp: new Date().toISOString(),
         isTest: true,
-        method: response.method || (useAgent ? 'agent' : 'knowledge_base'),
-        agentMetadata: response.data.agentMetadata
-      }
-      
-      setMessages(prev => [...prev, botMessage])
+        method: response.method || (useAgent ? "agent" : "knowledge_base"),
+        agentMetadata: response.data.agentMetadata,
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
     } catch (error) {
       const errorMessage = {
         id: Date.now() + 1,
-        type: 'bot',
-        content: `${useAgent ? 'Agent' : 'Knowledge Base'} Test Failed: ${error.response?.data?.message || error.message}`,
+        type: "bot",
+        content: `${useAgent ? "Agent" : "Knowledge Base"} Test Failed: ${
+          error.response?.data?.message || error.message
+        }`,
         error: true,
         timestamp: new Date().toISOString(),
-        isTest: true
-      }
-      
-      setMessages(prev => [...prev, errorMessage])
+        isTest: true,
+      };
+
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    
-    if (!inputMessage.trim() || loading) return
+    e.preventDefault();
+
+    if (!inputMessage.trim() || loading) return;
 
     const userMessage = {
       id: Date.now(),
-      type: 'user',
+      type: "user",
       content: inputMessage.trim(),
-      timestamp: new Date().toISOString()
-    }
+      timestamp: new Date().toISOString(),
+    };
 
-    setMessages(prev => [...prev, userMessage])
-    setInputMessage('')
-    setLoading(true)
+    setMessages((prev) => [...prev, userMessage]);
+    setInputMessage("");
+    setLoading(true);
 
     try {
       let response;
-      
+
       if (useAgent && agentInfo) {
         // Prepare data sources for filtering (only include non-empty arrays)
         const dataSources = {};
@@ -149,69 +172,82 @@ const ChatPage = () => {
           dataSources.documents = selectedDataSources.documents;
         }
 
-        // Use agent API with data source filtering
+        // --- Fetch latest aliasId before sending message to agent ---
+        let latestAliasId = null;
+        try {
+          latestAliasId = await getLatestAgentAlias();
+        } catch (err) {
+          // fallback: show error and skip agent call
+          throw new Error(
+            "No valid agent alias found. Please create an alias."
+          );
+        }
+
+        // Use agent API with data source filtering and latest aliasId
         response = await agentAPI.sendMessage(
-          userMessage.content, 
-          sessionId, 
+          userMessage.content,
+          sessionId,
           {
             useEnhancement: enhancementOptions.requestElaboration,
-            sessionConfig: { preferences: enhancementOptions }
+            sessionConfig: { preferences: enhancementOptions },
+            agentAliasId: latestAliasId, // Pass aliasId to backend
           },
           Object.keys(dataSources).length > 0 ? dataSources : null
-        )
+        );
       } else {
         // Use traditional chat API with agent fallback
         response = await chatAPI.sendMessage(
-          userMessage.content, 
-          sessionId, 
-          selectedModel, 
-          useAgent, 
+          userMessage.content,
+          sessionId,
+          selectedModel,
+          useAgent,
           enhancementOptions
-        )
+        );
       }
-      
+
       // Update session ID if we got a new one from the server
       if (response.data.sessionId && response.data.sessionId !== sessionId) {
-        setSessionId(response.data.sessionId)
+        setSessionId(response.data.sessionId);
       }
-      
+
       const botMessage = {
         id: Date.now() + 1,
-        type: 'bot',
+        type: "bot",
         content: response.data.answer,
         sources: response.data.sources || response.data.citations,
         model: response.data.model,
         method: response.data.method,
         agentMetadata: response.data.agentMetadata,
         appliedFilters: response.data.appliedFilters,
-        timestamp: new Date().toISOString()
-      }
+        timestamp: new Date().toISOString(),
+      };
 
-      setMessages(prev => [...prev, botMessage])
+      setMessages((prev) => [...prev, botMessage]);
     } catch (error) {
-      console.error('Chat error:', error)
-      
+      console.error("Chat error:", error);
+
       const errorMessage = {
         id: Date.now() + 1,
-        type: 'bot',
-        content: 'I apologize, but I encountered an error while processing your message. Please try again.',
+        type: "bot",
+        content:
+          "I apologize, but I encountered an error while processing your message. Please try again.",
         error: true,
-        timestamp: new Date().toISOString()
-      }
+        timestamp: new Date().toISOString(),
+      };
 
-      setMessages(prev => [...prev, errorMessage])
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
-      setLoading(false)
-      inputRef.current?.focus()
+      setLoading(false);
+      inputRef.current?.focus();
     }
-  }
+  };
 
   const formatTimestamp = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    })
-  }
+    return new Date(timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   return (
     <div className="max-w-4xl mx-auto h-[calc(100vh-12rem)] flex flex-col">
@@ -243,28 +279,30 @@ const ChatPage = () => {
               className="btn-secondary flex items-center space-x-2"
             >
               <TestTube size={18} />
-              <span>Test {useAgent ? 'Agent' : 'KB'}</span>
+              <span>Test {useAgent ? "Agent" : "KB"}</span>
             </button>
           </div>
         </div>
         <p className="text-gray-600">
-          Ask questions about your scraped content. I'll use {useAgent ? 'intelligent agents' : 'the knowledge base'} to provide accurate answers.
+          Ask questions about your scraped content. I'll use{" "}
+          {useAgent ? "intelligent agents" : "the knowledge base"} to provide
+          accurate answers.
         </p>
-        
+
         {/* Data Source Filter */}
         <div className="mt-4">
-          <DataSourceSelector 
+          <DataSourceSelector
             selectedDataSources={selectedDataSources}
             onDataSourcesChange={setSelectedDataSources}
             disabled={loading}
           />
         </div>
-        
+
         {/* Settings Panel */}
         {showSettings && (
           <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
             <h3 className="text-lg font-semibold mb-3">Chat Settings</h3>
-            
+
             {/* Agent Mode Toggle */}
             <div className="mb-4">
               <label className="flex items-center">
@@ -276,43 +314,60 @@ const ChatPage = () => {
                   className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <span className="text-sm font-medium">
-                  Use Bedrock Agent {!agentInfo && '(Not Available)'}
+                  Use Bedrock Agent {!agentInfo && "(Not Available)"}
                 </span>
               </label>
               <p className="text-xs text-gray-500 ml-6">
-                {agentInfo ? 'Use intelligent agents for enhanced responses' : 'Agent not configured - will use direct knowledge base'}
+                {agentInfo
+                  ? "Use intelligent agents for enhanced responses"
+                  : "Agent not configured - will use direct knowledge base"}
               </p>
             </div>
 
             {/* Enhancement Options */}
             <div className="space-y-3">
               <h4 className="text-sm font-semibold">Response Enhancement</h4>
-              
+
               <label className="flex items-center">
                 <input
                   type="checkbox"
                   checked={enhancementOptions.includeExamples}
-                  onChange={(e) => setEnhancementOptions(prev => ({ ...prev, includeExamples: e.target.checked }))}
+                  onChange={(e) =>
+                    setEnhancementOptions((prev) => ({
+                      ...prev,
+                      includeExamples: e.target.checked,
+                    }))
+                  }
                   className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <span className="text-sm">Include Examples</span>
               </label>
-              
+
               <label className="flex items-center">
                 <input
                   type="checkbox"
                   checked={enhancementOptions.requestElaboration}
-                  onChange={(e) => setEnhancementOptions(prev => ({ ...prev, requestElaboration: e.target.checked }))}
+                  onChange={(e) =>
+                    setEnhancementOptions((prev) => ({
+                      ...prev,
+                      requestElaboration: e.target.checked,
+                    }))
+                  }
                   className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <span className="text-sm">Request Detailed Explanations</span>
               </label>
-              
+
               <label className="flex items-center">
                 <input
                   type="checkbox"
                   checked={enhancementOptions.structureResponse}
-                  onChange={(e) => setEnhancementOptions(prev => ({ ...prev, structureResponse: e.target.checked }))}
+                  onChange={(e) =>
+                    setEnhancementOptions((prev) => ({
+                      ...prev,
+                      structureResponse: e.target.checked,
+                    }))
+                  }
                   className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <span className="text-sm">Structure Responses</span>
@@ -322,7 +377,9 @@ const ChatPage = () => {
             {/* Agent Info */}
             {agentInfo && (
               <div className="mt-4 p-3 bg-blue-50 rounded border border-blue-200">
-                <h5 className="text-sm font-semibold text-blue-900">Agent Information</h5>
+                <h5 className="text-sm font-semibold text-blue-900">
+                  Agent Information
+                </h5>
                 <div className="text-xs text-blue-700 mt-1">
                   <p>Name: {agentInfo.agentName}</p>
                   <p>Status: {agentInfo.status}</p>
@@ -341,50 +398,83 @@ const ChatPage = () => {
           {messages.map((message) => (
             <div
               key={message.id}
-              className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+              className={`flex ${
+                message.type === "user" ? "justify-end" : "justify-start"
+              }`}
             >
-              <div className={`flex max-w-3xl ${message.type === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+              <div
+                className={`flex max-w-3xl ${
+                  message.type === "user" ? "flex-row-reverse" : "flex-row"
+                }`}
+              >
                 {/* Avatar */}
-                <div className={`flex-shrink-0 ${message.type === 'user' ? 'ml-3' : 'mr-3'}`}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                    message.type === 'user' 
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-gray-200 text-gray-600'
-                  }`}>
-                    {message.type === 'user' ? <User size={18} /> : <Bot size={18} />}
+                <div
+                  className={`flex-shrink-0 ${
+                    message.type === "user" ? "ml-3" : "mr-3"
+                  }`}
+                >
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                      message.type === "user"
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
+                    {message.type === "user" ? (
+                      <User size={18} />
+                    ) : (
+                      <Bot size={18} />
+                    )}
                   </div>
                 </div>
 
                 {/* Message Content */}
-                <div className={`flex flex-col ${message.type === 'user' ? 'items-end' : 'items-start'}`}>
-                  <div className={`px-4 py-2 rounded-lg ${
-                    message.type === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : message.error
-                      ? 'bg-red-50 text-red-900 border border-red-200'
-                      : 'bg-gray-100 text-gray-900'
-                  }`}>
+                <div
+                  className={`flex flex-col ${
+                    message.type === "user" ? "items-end" : "items-start"
+                  }`}
+                >
+                  <div
+                    className={`px-4 py-2 rounded-lg ${
+                      message.type === "user"
+                        ? "bg-blue-600 text-white"
+                        : message.error
+                        ? "bg-red-50 text-red-900 border border-red-200"
+                        : "bg-gray-100 text-gray-900"
+                    }`}
+                  >
                     <p className="whitespace-pre-wrap">{message.content}</p>
-                    
+
                     {/* Applied Filters */}
                     {message.appliedFilters && (
                       <div className="mt-3 pt-3 border-t border-gray-300">
-                        <p className="text-sm font-medium mb-2">Filtered Sources:</p>
+                        <p className="text-sm font-medium mb-2">
+                          Filtered Sources:
+                        </p>
                         <div className="flex flex-wrap gap-1">
                           {message.appliedFilters.websites?.map((website) => (
-                            <span key={`filter-website-${website}`} className="inline-flex items-center px-2 py-1 rounded text-xs bg-blue-200 text-blue-800">
+                            <span
+                              key={`filter-website-${website}`}
+                              className="inline-flex items-center px-2 py-1 rounded text-xs bg-blue-200 text-blue-800"
+                            >
                               <Globe size={10} className="mr-1" />
                               {website}
                             </span>
                           ))}
                           {message.appliedFilters.pdfs?.map((pdf) => (
-                            <span key={`filter-pdf-${pdf}`} className="inline-flex items-center px-2 py-1 rounded text-xs bg-red-200 text-red-800">
+                            <span
+                              key={`filter-pdf-${pdf}`}
+                              className="inline-flex items-center px-2 py-1 rounded text-xs bg-red-200 text-red-800"
+                            >
                               <FileText size={10} className="mr-1" />
                               {pdf}
                             </span>
                           ))}
                           {message.appliedFilters.documents?.map((doc) => (
-                            <span key={`filter-doc-${doc}`} className="inline-flex items-center px-2 py-1 rounded text-xs bg-green-200 text-green-800">
+                            <span
+                              key={`filter-doc-${doc}`}
+                              className="inline-flex items-center px-2 py-1 rounded text-xs bg-green-200 text-green-800"
+                            >
                               <File size={10} className="mr-1" />
                               {doc}
                             </span>
@@ -402,20 +492,32 @@ const ChatPage = () => {
                             <div key={index} className="text-sm">
                               <div className="flex items-center space-x-2">
                                 <a
-                                  href={source.url || source.metadata?.[0]?.location?.s3Location?.uri || '#'}
+                                  href={
+                                    source.url ||
+                                    source.metadata?.[0]?.location?.s3Location
+                                      ?.uri ||
+                                    "#"
+                                  }
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="flex items-center text-blue-300 hover:text-blue-100"
                                 >
                                   <ExternalLink size={12} className="mr-1" />
-                                  {source.title || source.metadata?.[0]?.sourceMetadata?.title || `Source ${index + 1}`}
+                                  {source.title ||
+                                    source.metadata?.[0]?.sourceMetadata
+                                      ?.title ||
+                                    `Source ${index + 1}`}
                                 </a>
                                 {source.dataSourceType && (
-                                  <span className={`text-xs px-1 py-0.5 rounded ${
-                                    source.dataSourceType === 'website' ? 'bg-blue-200 text-blue-800' :
-                                    source.dataSourceType === 'pdf' ? 'bg-red-200 text-red-800' :
-                                    'bg-green-200 text-green-800'
-                                  }`}>
+                                  <span
+                                    className={`text-xs px-1 py-0.5 rounded ${
+                                      source.dataSourceType === "website"
+                                        ? "bg-blue-200 text-blue-800"
+                                        : source.dataSourceType === "pdf"
+                                        ? "bg-red-200 text-red-800"
+                                        : "bg-green-200 text-green-800"
+                                    }`}
+                                  >
                                     {source.dataSourceType}
                                   </span>
                                 )}
@@ -432,16 +534,22 @@ const ChatPage = () => {
                         <div className="text-xs text-gray-400 space-y-1">
                           <p>Method: {message.method}</p>
                           {message.agentMetadata.responseTime && (
-                            <p>Response Time: {message.agentMetadata.responseTime}ms</p>
+                            <p>
+                              Response Time:{" "}
+                              {message.agentMetadata.responseTime}ms
+                            </p>
                           )}
                           {message.agentMetadata.analysis && (
-                            <p>Interaction Style: {message.agentMetadata.analysis.interactionStyle}</p>
+                            <p>
+                              Interaction Style:{" "}
+                              {message.agentMetadata.analysis.interactionStyle}
+                            </p>
                           )}
                         </div>
                       </div>
                     )}
                   </div>
-                  
+
                   {/* Timestamp */}
                   <span className="text-xs text-gray-500 mt-1">
                     {formatTimestamp(message.timestamp)}
@@ -477,12 +585,15 @@ const ChatPage = () => {
         <div className="border-t border-gray-200 p-4">
           {/* Model Selection */}
           <div className="mb-3 flex items-center space-x-4">
-            <label htmlFor="model-select" className="text-sm font-medium text-gray-700">
+            <label
+              htmlFor="model-select"
+              className="text-sm font-medium text-gray-700"
+            >
               Model:
             </label>
             <select
               id="model-select"
-              value={selectedModel || ''}
+              value={selectedModel || ""}
               onChange={(e) => setSelectedModel(e.target.value)}
               className="text-sm border border-gray-300 rounded-md px-3 py-1 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               disabled={loading}
@@ -494,10 +605,16 @@ const ChatPage = () => {
               ))}
             </select>
             <span className="text-xs text-gray-500">
-              {availableModels[Object.keys(availableModels).find(key => availableModels[key].id === selectedModel)]?.provider}
+              {
+                availableModels[
+                  Object.keys(availableModels).find(
+                    (key) => availableModels[key].id === selectedModel
+                  )
+                ]?.provider
+              }
             </span>
           </div>
-          
+
           <form onSubmit={handleSubmit} className="flex space-x-4">
             <input
               ref={inputRef}
@@ -522,12 +639,21 @@ const ChatPage = () => {
               <span className="hidden sm:inline">Send</span>
             </button>
           </form>
-          
+
           <div className="mt-2 flex justify-between text-xs text-gray-500">
-            <span>Session ID: {sessionId || 'New session will be created'}</span>
+            <span>
+              Session ID: {sessionId || "New session will be created"}
+            </span>
             <div className="flex items-center space-x-4">
-              <span>Mode: {useAgent ? 'Agent' : 'Knowledge Base'}</span>
-              <span>Model: {availableModels[Object.keys(availableModels).find(key => availableModels[key].id === selectedModel)]?.name || 'Default'}</span>
+              <span>Mode: {useAgent ? "Agent" : "Knowledge Base"}</span>
+              <span>
+                Model:{" "}
+                {availableModels[
+                  Object.keys(availableModels).find(
+                    (key) => availableModels[key].id === selectedModel
+                  )
+                ]?.name || "Default"}
+              </span>
             </div>
           </div>
         </div>
@@ -536,19 +662,43 @@ const ChatPage = () => {
       {/* Instructions */}
       {messages.length === 1 && (
         <div className="mt-6 card bg-gray-50">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3">Tips for better conversations</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-3">
+            Tips for better conversations
+          </h3>
           <div className="space-y-2 text-sm text-gray-600">
-            <p>• Ask specific questions about products, recipes, classes, and detailed content from scraped websites</p>
-            <p>• Reference specific products by name, ingredients from recipes, or class details</p>
-            <p>• {useAgent ? 'Agent mode provides intelligent reasoning and contextual responses' : 'Use different AI models for varied response styles and capabilities'}</p>
-            <p>• Ask for summaries, comparisons, or detailed explanations about structured data</p>
-            <p>• Query about prices, specifications, instructions, or any detailed information</p>
-            <p>• {useAgent ? 'Agents maintain conversation context and provide follow-up suggestions' : 'Enable agent mode in settings for enhanced conversational AI'}</p>
+            <p>
+              • Ask specific questions about products, recipes, classes, and
+              detailed content from scraped websites
+            </p>
+            <p>
+              • Reference specific products by name, ingredients from recipes,
+              or class details
+            </p>
+            <p>
+              •{" "}
+              {useAgent
+                ? "Agent mode provides intelligent reasoning and contextual responses"
+                : "Use different AI models for varied response styles and capabilities"}
+            </p>
+            <p>
+              • Ask for summaries, comparisons, or detailed explanations about
+              structured data
+            </p>
+            <p>
+              • Query about prices, specifications, instructions, or any
+              detailed information
+            </p>
+            <p>
+              •{" "}
+              {useAgent
+                ? "Agents maintain conversation context and provide follow-up suggestions"
+                : "Enable agent mode in settings for enhanced conversational AI"}
+            </p>
           </div>
         </div>
       )}
     </div>
-  )
-}
+  );
+};
 
-export default ChatPage
+export default ChatPage;

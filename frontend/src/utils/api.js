@@ -1,22 +1,28 @@
-import axios from 'axios';
+import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:3002/api";
 // Allow long-running requests from the browser (default 20 minutes)
-const API_TIMEOUT = parseInt(import.meta.env.VITE_API_TIMEOUT_MS || '1200000', 10);
+const API_TIMEOUT = parseInt(
+  import.meta.env.VITE_API_TIMEOUT_MS || "1200000",
+  10
+);
 
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: API_TIMEOUT,
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
 });
 
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    console.log(`Making ${config.method?.toUpperCase()} request to ${config.url}`);
+    console.log(
+      `Making ${config.method?.toUpperCase()} request to ${config.url}`
+    );
     return config;
   },
   (error) => {
@@ -30,7 +36,7 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('API Error:', error.response?.data || error.message);
+    console.error("API Error:", error.response?.data || error.message);
     return Promise.reject(error);
   }
 );
@@ -38,92 +44,100 @@ api.interceptors.response.use(
 // API functions
 export const scrapingAPI = {
   scrapeWebsite: async (url, options = {}) => {
-    const response = await api.post('/scraping/scrape', { url, options });
+    const response = await api.post("/scraping/scrape", { url, options });
     return response.data;
   },
-  
+
   crawlWebsite: async (url, options = {}) => {
-    const response = await api.post('/scraping/crawl', { url, options });
+    const response = await api.post("/scraping/crawl", { url, options });
     return response.data;
   },
-  
+
   // Start async crawl job (returns immediately with jobId)
   startAsyncCrawl: async (url, options = {}) => {
-    const response = await api.post('/scraping/enhanced-crawl', { url, options });
+    const response = await api.post("/scraping/enhanced-crawl", {
+      url,
+      options,
+    });
     return response.data;
   },
-  
+
   // Get crawl job status
   getCrawlStatus: async (jobId) => {
     const response = await api.get(`/scraping/crawl/status/${jobId}`);
     return response.data;
   },
-  
+
   // Legacy endpoint (for backward compatibility)
   getCrawlProgress: async (jobId) => {
     const response = await api.get(`/scraping/crawl/status/${jobId}`);
     return response.data;
   },
-  
+
   // Poll crawl job until completion
   pollCrawlCompletion: async (jobId, onProgress = null) => {
     const pollInterval = 5000; // 5 seconds
     const maxPollTime = 600000; // 10 minutes max
     const startTime = Date.now();
-    
+
     while (Date.now() - startTime < maxPollTime) {
       try {
         const response = await scrapingAPI.getCrawlStatus(jobId);
         const { data } = response;
-        
+
         // Call progress callback if provided
         if (onProgress) {
           onProgress(data);
         }
-        
+
         // Check if job is completed
-        if (data.status === 'completed') {
+        if (data.status === "completed") {
           return { success: true, data: data.result };
         }
-        
+
         // Check if job failed
-        if (data.status === 'failed') {
-          throw new Error(data.error || 'Crawl job failed');
+        if (data.status === "failed") {
+          throw new Error(data.error || "Crawl job failed");
         }
-        
+
         // Wait before next poll
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
       } catch (error) {
         if (error.response?.status === 404) {
-          throw new Error('Crawl job not found');
+          throw new Error("Crawl job not found");
         }
         throw error;
       }
     }
-    
-    throw new Error('Crawl job timed out');
+
+    throw new Error("Crawl job timed out");
   },
-  
+
   getStatus: async (domain = null) => {
-    const endpoint = domain ? `/scraping/status/${domain}` : '/scraping/status';
+    const endpoint = domain ? `/scraping/status/${domain}` : "/scraping/status";
     const response = await api.get(endpoint);
     return response.data;
   },
-  
+
   getOptions: async () => {
-    const response = await api.get('/scraping/options');
+    const response = await api.get("/scraping/options");
     return response.data;
   },
 
   checkHealth: async () => {
-    const response = await api.get('/scraping/health');
+    const response = await api.get("/scraping/health");
     return response.data;
-  }
+  },
 };
 
 export const chatAPI = {
-  sendMessage: async (message, sessionId = null, model = null, useAgent = null, enhancementOptions = {}) => {
+  sendMessage: async (
+    message,
+    sessionId = null,
+    model = null,
+    useAgent = null,
+    enhancementOptions = {}
+  ) => {
     const payload = { message };
     if (sessionId) {
       payload.sessionId = sessionId;
@@ -137,10 +151,10 @@ export const chatAPI = {
     if (Object.keys(enhancementOptions).length > 0) {
       payload.enhancementOptions = enhancementOptions;
     }
-    const response = await api.post('/chat/query', payload);
+    const response = await api.post("/chat/query", payload);
     return response.data;
   },
-  
+
   sendDirectMessage: async (prompt, model = null, enhancementOptions = {}) => {
     const payload = { prompt };
     if (model) {
@@ -149,48 +163,48 @@ export const chatAPI = {
     if (Object.keys(enhancementOptions).length > 0) {
       payload.enhancementOptions = enhancementOptions;
     }
-    const response = await api.post('/chat/direct', payload);
+    const response = await api.post("/chat/direct", payload);
     return response.data;
   },
-  
+
   testKnowledgeBase: async (useAgent = false) => {
-    const params = useAgent ? '?useAgent=true' : '';
+    const params = useAgent ? "?useAgent=true" : "";
     const response = await api.get(`/chat/test${params}`);
     return response.data;
   },
-  
+
   getSession: async (sessionId) => {
     const response = await api.get(`/chat/session/${sessionId}`);
     return response.data;
   },
-  
+
   getModels: async () => {
-    const response = await api.get('/chat/models');
+    const response = await api.get("/chat/models");
     return response.data;
   },
 
   getEnhancementOptions: async () => {
-    const response = await api.get('/chat/enhancement-options');
+    const response = await api.get("/chat/enhancement-options");
     return response.data;
   },
 
   getStatus: async () => {
-    const response = await api.get('/chat/status');
+    const response = await api.get("/chat/status");
     return response.data;
-  }
+  },
 };
 
 // New Agent API functions
 export const agentAPI = {
   // Send message to Bedrock Agent with enhanced options including conversation history
   sendMessage: async (message, sessionId = null, options = {}) => {
-    const payload = { 
+    const payload = {
       message,
       sessionId,
-      ...options // This now includes dataSources, model, temperature, topP, systemPrompt, history, etc.
+      ...options, // This now includes dataSources, model, temperature, topP, systemPrompt, history, etc.
     };
 
-    const response = await api.post('/chat/agent', payload);
+    const response = await api.post("/chat/agent", payload);
     return response.data;
   },
 
@@ -206,9 +220,9 @@ export const agentAPI = {
     history = {
       enabled: true,
       maxMessages: 6,
-      contextWeight: 'balanced'
+      contextWeight: "balanced",
     },
-    options = {}
+    options = {},
   }) => {
     const payload = {
       message,
@@ -219,49 +233,53 @@ export const agentAPI = {
       topP,
       systemPrompt,
       history,
-      options
+      options,
     };
 
-    const response = await api.post('/chat/agent', payload);
+    const response = await api.post("/chat/agent", payload);
     return response.data;
   },
 
   // Get agent information and status
   getInfo: async () => {
-    const response = await api.get('/chat/agent/info');
+    const response = await api.get("/chat/agent/info");
     return response.data;
   },
 
   // Test agent connectivity
   test: async () => {
-    const response = await api.get('/chat/agent/test');
+    const response = await api.get("/chat/agent/test");
     return response.data;
   },
 
   // Get agent health status
   getHealth: async () => {
-    const response = await api.get('/chat/agent/health');
+    const response = await api.get("/chat/agent/health");
     return response.data;
   },
 
   // Get active sessions
   getSessions: async () => {
-    const response = await api.get('/chat/agent/sessions');
+    const response = await api.get("/chat/agent/sessions");
     return response.data;
   },
 
   // Get conversation history for a session
   getConversationHistory: async (sessionId, options = {}) => {
     const params = new URLSearchParams();
-    if (options.limit) params.append('limit', options.limit);
-    if (options.messageType) params.append('messageType', options.messageType);
-    if (options.includeMetadata !== undefined) params.append('includeMetadata', options.includeMetadata);
-    if (options.fromTimestamp) params.append('fromTimestamp', options.fromTimestamp);
-    if (options.toTimestamp) params.append('toTimestamp', options.toTimestamp);
-    
+    if (options.limit) params.append("limit", options.limit);
+    if (options.messageType) params.append("messageType", options.messageType);
+    if (options.includeMetadata !== undefined)
+      params.append("includeMetadata", options.includeMetadata);
+    if (options.fromTimestamp)
+      params.append("fromTimestamp", options.fromTimestamp);
+    if (options.toTimestamp) params.append("toTimestamp", options.toTimestamp);
+
     const queryString = params.toString();
-    const url = `/chat/agent/history/${sessionId}${queryString ? `?${queryString}` : ''}`;
-    
+    const url = `/chat/agent/history/${sessionId}${
+      queryString ? `?${queryString}` : ""
+    }`;
+
     const response = await api.get(url);
     return response.data;
   },
@@ -276,13 +294,13 @@ export const agentAPI = {
   getRecentConversations: async (sessionId, limit = 10) => {
     return await agentAPI.getConversationHistory(sessionId, {
       limit,
-      includeMetadata: false
+      includeMetadata: false,
     });
   },
 
   // Setup and configuration
   setup: async (config = {}) => {
-    const response = await api.post('/chat/agent/setup', config);
+    const response = await api.post("/chat/agent/setup", config);
     return response.data;
   },
 
@@ -306,27 +324,27 @@ export const agentAPI = {
 
   // Get environment configuration
   getConfig: async () => {
-    const response = await api.get('/chat/agent/config');
+    const response = await api.get("/chat/agent/config");
     return response.data;
   },
 
   // Agent Instructions Management (Simplified)
   getCurrentInstructions: async () => {
-    const response = await api.get('/agent-instructions/current');
+    const response = await api.get("/agent-instructions/current");
     return response.data;
   },
 
   updateToDefaultInstructions: async () => {
-    const response = await api.post('/agent-instructions/update-default');
+    const response = await api.post("/agent-instructions/update-default");
     return response.data;
   },
 
   updateToCustomInstructions: async (instructions) => {
-    const response = await api.post('/agent-instructions/update-custom', {
-      instructions
+    const response = await api.post("/agent-instructions/update-custom", {
+      instructions,
     });
     return response.data;
-  }
+  },
 };
 
 export const syncAPI = {
@@ -334,126 +352,140 @@ export const syncAPI = {
     const response = await api.get(`/scraping/sync/status/${jobId}`);
     return response.data;
   },
-  
+
   triggerSync: async (domain) => {
-    const response = await api.post('/scraping/sync', { domain });
+    const response = await api.post("/scraping/sync", { domain });
     return response.data;
-  }
+  },
 };
 
 export const filesAPI = {
   uploadFiles: async (formData) => {
-    const response = await api.post('/files/upload', formData, {
+    const response = await api.post("/files/upload", formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        "Content-Type": "multipart/form-data",
       },
     });
     return response.data;
   },
-  
+
   getInfo: async () => {
-    const response = await api.get('/files/info');
+    const response = await api.get("/files/info");
     return response.data;
   },
-  
+
   getSyncStatus: async (jobId) => {
     const response = await api.get(`/files/sync-status/${jobId}`);
     return response.data;
   },
-  
+
   getSyncJobs: async (limit = 10) => {
     const response = await api.get(`/files/sync-jobs?limit=${limit}`);
     return response.data;
   },
-  
+
   getStats: async () => {
-    const response = await api.get('/files/stats');
+    const response = await api.get("/files/stats");
     return response.data;
   },
-  
+
   triggerSync: async () => {
-    const response = await api.post('/files/sync');
+    const response = await api.post("/files/sync");
     return response.data;
   },
-  
+
   checkHealth: async () => {
-    const response = await api.get('/files/health');
+    const response = await api.get("/files/health");
     return response.data;
-  }
+  },
 };
 
 export const dataManagementAPI = {
   // Get all domains summary
   getDomains: async () => {
-    const response = await api.get('/data-management/domains');
+    const response = await api.get("/data-management/domains");
     return response.data;
   },
-  
+
   // Get documents for a specific domain
   getDocumentsByDomain: async (domain) => {
-    const response = await api.get(`/data-management/domains/${domain}/documents`);
+    const response = await api.get(
+      `/data-management/domains/${domain}/documents`
+    );
     return response.data;
   },
-  
+
   // Get documents for a specific URL
   getDocumentsByUrl: async (url) => {
-    const response = await api.get(`/data-management/urls/documents?url=${encodeURIComponent(url)}`);
+    const response = await api.get(
+      `/data-management/urls/documents?url=${encodeURIComponent(url)}`
+    );
     return response.data;
   },
-  
+
   // Delete domain data (with confirmation)
   deleteDomainData: async (domain, options = {}) => {
     const params = new URLSearchParams();
-    if (options.dryRun) params.append('dryRun', 'true');
-    if (options.confirm) params.append('confirm', domain);
-    if (options.syncKnowledgeBase !== undefined) params.append('syncKnowledgeBase', options.syncKnowledgeBase);
-    
-    const response = await api.delete(`/data-management/domains/${domain}?${params}`);
+    if (options.dryRun) params.append("dryRun", "true");
+    if (options.confirm) params.append("confirm", domain);
+    if (options.syncKnowledgeBase !== undefined)
+      params.append("syncKnowledgeBase", options.syncKnowledgeBase);
+
+    const response = await api.delete(
+      `/data-management/domains/${domain}?${params}`
+    );
     return response.data;
   },
-  
+
   // Delete URL data (with confirmation)
   deleteUrlData: async (url, options = {}) => {
     const params = new URLSearchParams();
-    params.append('url', url);
-    if (options.dryRun) params.append('dryRun', 'true');
-    if (options.confirm) params.append('confirm', options.confirm);
-    if (options.syncKnowledgeBase !== undefined) params.append('syncKnowledgeBase', options.syncKnowledgeBase);
-    
+    params.append("url", url);
+    if (options.dryRun) params.append("dryRun", "true");
+    if (options.confirm) params.append("confirm", options.confirm);
+    if (options.syncKnowledgeBase !== undefined)
+      params.append("syncKnowledgeBase", options.syncKnowledgeBase);
+
     const response = await api.delete(`/data-management/urls?${params}`);
     return response.data;
   },
-  
+
   // Get deletion preview for domain
   getDomainDeletionPreview: async (domain) => {
-    const response = await api.get(`/data-management/domains/${domain}/deletion-preview`);
+    const response = await api.get(
+      `/data-management/domains/${domain}/deletion-preview`
+    );
     return response.data;
   },
-  
+
   // Get deletion preview for URL
   getUrlDeletionPreview: async (url) => {
-    const response = await api.get(`/data-management/urls/deletion-preview?url=${encodeURIComponent(url)}`);
+    const response = await api.get(
+      `/data-management/urls/deletion-preview?url=${encodeURIComponent(url)}`
+    );
     return response.data;
   },
 
   // Get available data sources for filtering
   getAvailableDataSources: async () => {
-    const response = await api.get('/data-management/domains');
+    const response = await api.get("/data-management/domains");
     return response.data;
-  }
+  },
 };
 
 // Action Group API functions
 export const actionGroupAPI = {
   // Create a new action group
   createActionGroup: async (apiConfig) => {
-    const response = await api.post('/action-groups/create', apiConfig);
+    const response = await api.post("/action-groups/create", apiConfig);
     return response.data;
   },
 
   // List all action groups
   listActionGroups: async (agentId = null) => {
-    const endpoint = agentId ? `/action-groups?agentId=${agentId}` : '/action-groups';
+    const endpoint = agentId
+      ? `/action-groups?agentId=${agentId}`
+      : "/action-groups";
     const response = await api.get(endpoint);
     return response.data;
   },
@@ -484,31 +516,36 @@ export const actionGroupAPI = {
 
   // Test action group
   testActionGroup: async (actionGroupId, testData = {}) => {
-    const response = await api.post(`/action-groups/${actionGroupId}/test`, testData);
+    const response = await api.post(
+      `/action-groups/${actionGroupId}/test`,
+      testData
+    );
     return response.data;
   },
 
   // Generate OpenAPI schema preview
   previewOpenAPISchema: async (apiConfig) => {
-    const response = await api.post('/action-groups/preview-schema', apiConfig);
+    const response = await api.post("/action-groups/preview-schema", apiConfig);
     return response.data;
   },
 
   // Get agent information
   getAgentInfo: async () => {
-    const response = await api.get('/action-groups/agent-info');
+    const response = await api.get("/action-groups/agent-info");
     return response.data;
   },
 
   // Validate API configuration
   validateApiConfig: async (apiConfig) => {
-    const response = await api.post('/action-groups/validate', apiConfig);
+    const response = await api.post("/action-groups/validate", apiConfig);
     return response.data;
   },
 
   // Get action group execution history
   getExecutionHistory: async (actionGroupId, limit = 50) => {
-    const response = await api.get(`/action-groups/${actionGroupId}/history?limit=${limit}`);
+    const response = await api.get(
+      `/action-groups/${actionGroupId}/history?limit=${limit}`
+    );
     return response.data;
   },
 
@@ -521,7 +558,7 @@ export const actionGroupAPI = {
   // Enable action group
   enableActionGroup: async (actionGroupId) => {
     const response = await api.put(`/action-groups/${actionGroupId}`, {
-      actionGroupState: 'ENABLED'
+      actionGroupState: "ENABLED",
     });
     return response.data;
   },
@@ -529,17 +566,26 @@ export const actionGroupAPI = {
   // Disable action group
   disableActionGroup: async (actionGroupId) => {
     const response = await api.put(`/action-groups/${actionGroupId}`, {
-      actionGroupState: 'DISABLED'
+      actionGroupState: "DISABLED",
     });
     return response.data;
-  }
+  },
 };
 
 export const healthAPI = {
   checkHealth: async () => {
-    const response = await api.get('/health');
+    const response = await api.get("/health");
     return response.data;
+  },
+};
+
+// Utility to get the latest agent alias from backend
+export const getLatestAgentAlias = async () => {
+  const response = await api.get("/action-groups/aliases/latest");
+  if (response.data && response.data.success && response.data.data?.aliasId) {
+    return response.data.data.aliasId;
   }
+  throw new Error("No latest alias found");
 };
 
 export default api;

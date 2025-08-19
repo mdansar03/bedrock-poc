@@ -1,8 +1,8 @@
-const express = require('express');
-const { body, param, query, validationResult } = require('express-validator');
-const actionGroupService = require('../services/actionGroupService');
-const openApiGeneratorService = require('../services/openApiGeneratorService');
-const logger = require('../utils/logger');
+const express = require("express");
+const { body, param, query, validationResult } = require("express-validator");
+const actionGroupService = require("../services/actionGroupService");
+const openApiGeneratorService = require("../services/openApiGeneratorService");
+const logger = require("../utils/logger");
 
 const router = express.Router();
 
@@ -36,7 +36,7 @@ const router = express.Router();
  *             $ref: '#/components/schemas/ApiEndpoint'
  *         authentication:
  *           $ref: '#/components/schemas/ApiAuthentication'
- *     
+ *
  *     ApiEndpoint:
  *       type: object
  *       required:
@@ -65,7 +65,7 @@ const router = express.Router();
  *           type: string
  *           description: JSON response example
  *           example: '{"orderId": "12345", "status": "shipped"}'
- *     
+ *
  *     ApiParameter:
  *       type: object
  *       required:
@@ -95,7 +95,7 @@ const router = express.Router();
  *           type: string
  *           description: Parameter description
  *           example: "The order ID to track"
- *     
+ *
  *     ApiAuthentication:
  *       type: object
  *       properties:
@@ -117,7 +117,7 @@ const router = express.Router();
  *           type: string
  *           description: Authentication value (will be encrypted)
  *           example: "your-api-key-here"
- *     
+ *
  *     ActionGroup:
  *       type: object
  *       properties:
@@ -207,38 +207,37 @@ const router = express.Router();
  *       500:
  *         description: Server error
  */
-router.post('/create',
+router.post(
+  "/create",
   [
-    body('apiName')
+    body("apiName")
       .notEmpty()
-      .withMessage('API name is required')
+      .withMessage("API name is required")
       .isLength({ min: 3, max: 100 })
-      .withMessage('API name must be between 3 and 100 characters'),
-    
-    body('baseUrl')
-      .isURL()
-      .withMessage('Valid base URL is required'),
-    
-    body('endpoints')
+      .withMessage("API name must be between 3 and 100 characters"),
+
+    body("baseUrl").isURL().withMessage("Valid base URL is required"),
+
+    body("endpoints")
       .isArray({ min: 1 })
-      .withMessage('At least one endpoint is required'),
-    
-    body('endpoints.*.path')
+      .withMessage("At least one endpoint is required"),
+
+    body("endpoints.*.path")
       .notEmpty()
-      .withMessage('Endpoint path is required'),
-    
-    body('endpoints.*.method')
-      .isIn(['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
-      .withMessage('Valid HTTP method is required'),
-    
-    body('endpoints.*.description')
+      .withMessage("Endpoint path is required"),
+
+    body("endpoints.*.method")
+      .isIn(["GET", "POST", "PUT", "DELETE", "PATCH"])
+      .withMessage("Valid HTTP method is required"),
+
+    body("endpoints.*.description")
       .notEmpty()
-      .withMessage('Endpoint description is required'),
-    
-    body('authentication.type')
+      .withMessage("Endpoint description is required"),
+
+    body("authentication.type")
       .optional()
-      .isIn(['none', 'apiKey', 'bearer', 'basic'])
-      .withMessage('Valid authentication type is required')
+      .isIn(["none", "apiKey", "bearer", "basic"])
+      .withMessage("Valid authentication type is required"),
   ],
   async (req, res) => {
     try {
@@ -246,33 +245,39 @@ router.post('/create',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
       const apiConfig = req.body;
-      logger.info('Creating action group for API:', apiConfig.apiName);
+      logger.info("Creating action group for API:", apiConfig.apiName);
 
       // Step 1: Validate API configuration
-      const configValidation = await actionGroupService.validateApiConfiguration(apiConfig);
+      const configValidation =
+        await actionGroupService.validateApiConfiguration(apiConfig);
       if (!configValidation.valid) {
         return res.status(400).json({
           success: false,
-          error: 'API configuration validation failed',
-          details: configValidation.errors
+          error: "API configuration validation failed",
+          details: configValidation.errors,
         });
       }
 
       // Step 2: Generate OpenAPI schema
-      const openApiSchema = await openApiGeneratorService.generateSchema(apiConfig);
+      const openApiSchema = await openApiGeneratorService.generateSchema(
+        apiConfig
+      );
 
       // Step 3: Create action group in AWS Bedrock
-      const result = await actionGroupService.createActionGroup(apiConfig, openApiSchema);
+      const result = await actionGroupService.createActionGroup(
+        apiConfig,
+        openApiSchema
+      );
 
       res.json({
         success: true,
-        message: 'Action group created successfully',
+        message: "Action group created successfully",
         data: {
           actionGroupId: result.actionGroupId,
           actionGroupName: result.actionGroupName,
@@ -280,16 +285,15 @@ router.post('/create',
           openApiSchema: openApiSchema,
           lambdaFunction: result.lambdaFunction,
           agentStatus: result.agentStatus,
-          createdAt: result.createdAt
-        }
+          createdAt: result.createdAt,
+        },
       });
-
     } catch (error) {
-      logger.error('Error creating action group:', error);
+      logger.error("Error creating action group:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to create action group',
-        message: error.message
+        error: "Failed to create action group",
+        message: error.message,
       });
     }
   }
@@ -336,10 +340,11 @@ router.post('/create',
  *                       type: integer
  *                       example: 5
  */
-router.get('/',
+router.get(
+  "/",
   [
-    query('agentId').optional().isString(),
-    query('status').optional().isIn(['ENABLED', 'DISABLED'])
+    query("agentId").optional().isString(),
+    query("status").optional().isIn(["ENABLED", "DISABLED"]),
   ],
   async (req, res) => {
     try {
@@ -347,28 +352,30 @@ router.get('/',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
       const { agentId, status } = req.query;
-      const result = await actionGroupService.listActionGroups({ agentId, status });
+      const result = await actionGroupService.listActionGroups({
+        agentId,
+        status,
+      });
 
       res.json({
         success: true,
         data: {
           actionGroups: result.actionGroups,
-          totalCount: result.totalCount
-        }
+          totalCount: result.totalCount,
+        },
       });
-
     } catch (error) {
-      logger.error('Error listing action groups:', error);
+      logger.error("Error listing action groups:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to list action groups',
-        message: error.message
+        error: "Failed to list action groups",
+        message: error.message,
       });
     }
   }
@@ -409,28 +416,25 @@ router.get('/',
  *                         actionGroupsCount:
  *                           type: integer
  */
-router.get('/agent-info',
-  async (req, res) => {
-    try {
-      const agentInfo = await actionGroupService.getAgentInfo();
+router.get("/agent-info", async (req, res) => {
+  try {
+    const agentInfo = await actionGroupService.getAgentInfo();
 
-      res.json({
-        success: true,
-        data: {
-          agent: agentInfo
-        }
-      });
-
-    } catch (error) {
-      logger.error('Error getting agent info:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to get agent information',
-        message: error.message
-      });
-    }
+    res.json({
+      success: true,
+      data: {
+        agent: agentInfo,
+      },
+    });
+  } catch (error) {
+    logger.error("Error getting agent info:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get agent information",
+      message: error.message,
+    });
   }
-);
+});
 
 /**
  * @swagger
@@ -462,9 +466,12 @@ router.get('/agent-info',
  *       404:
  *         description: Action group not found
  */
-router.get('/:actionGroupId',
+router.get(
+  "/:actionGroupId",
   [
-    param('actionGroupId').notEmpty().withMessage('Action group ID is required')
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
   ],
   async (req, res) => {
     try {
@@ -472,8 +479,8 @@ router.get('/:actionGroupId',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
@@ -483,21 +490,20 @@ router.get('/:actionGroupId',
       if (!result) {
         return res.status(404).json({
           success: false,
-          error: 'Action group not found'
+          error: "Action group not found",
         });
       }
 
       res.json({
         success: true,
-        data: result
+        data: result,
       });
-
     } catch (error) {
-      logger.error('Error getting action group:', error);
+      logger.error("Error getting action group:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to get action group',
-        message: error.message
+        error: "Failed to get action group",
+        message: error.message,
       });
     }
   }
@@ -543,9 +549,12 @@ router.get('/:actionGroupId',
  *       404:
  *         description: Action group not found
  */
-router.get('/:actionGroupId/config',
+router.get(
+  "/:actionGroupId/config",
   [
-    param('actionGroupId').notEmpty().withMessage('Action group ID is required')
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
   ],
   async (req, res) => {
     try {
@@ -553,32 +562,33 @@ router.get('/:actionGroupId/config',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
       const { actionGroupId } = req.params;
-      const result = await actionGroupService.getActionGroupWithConfig(actionGroupId);
+      const result = await actionGroupService.getActionGroupWithConfig(
+        actionGroupId
+      );
 
       if (!result) {
         return res.status(404).json({
           success: false,
-          error: 'Action group not found'
+          error: "Action group not found",
         });
       }
 
       res.json({
         success: true,
-        data: result
+        data: result,
       });
-
     } catch (error) {
-      logger.error('Error getting action group config:', error);
+      logger.error("Error getting action group config:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to get action group configuration',
-        message: error.message
+        error: "Failed to get action group configuration",
+        message: error.message,
       });
     }
   }
@@ -620,10 +630,13 @@ router.get('/:actionGroupId/config',
  *       404:
  *         description: Action group not found
  */
-router.put('/:actionGroupId',
+router.put(
+  "/:actionGroupId",
   [
-    param('actionGroupId').notEmpty().withMessage('Action group ID is required'),
-    body('actionGroupState').optional().isIn(['ENABLED', 'DISABLED'])
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
+    body("actionGroupState").optional().isIn(["ENABLED", "DISABLED"]),
   ],
   async (req, res) => {
     try {
@@ -631,28 +644,30 @@ router.put('/:actionGroupId',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
       const { actionGroupId } = req.params;
       const updates = req.body;
 
-      const result = await actionGroupService.updateActionGroup(actionGroupId, updates);
+      const result = await actionGroupService.updateActionGroup(
+        actionGroupId,
+        updates
+      );
 
       res.json({
         success: true,
-        message: 'Action group updated successfully',
-        data: result
+        message: "Action group updated successfully",
+        data: result,
       });
-
     } catch (error) {
-      logger.error('Error updating action group:', error);
+      logger.error("Error updating action group:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to update action group',
-        message: error.message
+        error: "Failed to update action group",
+        message: error.message,
       });
     }
   }
@@ -678,9 +693,12 @@ router.put('/:actionGroupId',
  *       404:
  *         description: Action group not found
  */
-router.delete('/:actionGroupId',
+router.delete(
+  "/:actionGroupId",
   [
-    param('actionGroupId').notEmpty().withMessage('Action group ID is required')
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
   ],
   async (req, res) => {
     try {
@@ -688,8 +706,8 @@ router.delete('/:actionGroupId',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
@@ -698,15 +716,14 @@ router.delete('/:actionGroupId',
 
       res.json({
         success: true,
-        message: 'Action group deleted successfully'
+        message: "Action group deleted successfully",
       });
-
     } catch (error) {
-      logger.error('Error deleting action group:', error);
+      logger.error("Error deleting action group:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to delete action group',
-        message: error.message
+        error: "Failed to delete action group",
+        message: error.message,
       });
     }
   }
@@ -764,9 +781,12 @@ router.delete('/:actionGroupId',
  *                       type: object
  *                       description: Lambda function response
  */
-router.post('/:actionGroupId/test',
+router.post(
+  "/:actionGroupId/test",
   [
-    param('actionGroupId').notEmpty().withMessage('Action group ID is required')
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
   ],
   async (req, res) => {
     try {
@@ -774,8 +794,8 @@ router.post('/:actionGroupId/test',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
@@ -784,20 +804,19 @@ router.post('/:actionGroupId/test',
 
       const result = await actionGroupService.testActionGroup(actionGroupId, {
         testMessage,
-        parameters
+        parameters,
       });
 
       res.json({
         success: true,
-        data: result
+        data: result,
       });
-
     } catch (error) {
-      logger.error('Error testing action group:', error);
+      logger.error("Error testing action group:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to test action group',
-        message: error.message
+        error: "Failed to test action group",
+        message: error.message,
       });
     }
   }
@@ -843,11 +862,14 @@ router.post('/:actionGroupId/test',
  *                           items:
  *                             type: string
  */
-router.post('/preview-schema',
+router.post(
+  "/preview-schema",
   [
-    body('apiName').notEmpty().withMessage('API name is required'),
-    body('baseUrl').isURL().withMessage('Valid base URL is required'),
-    body('endpoints').isArray({ min: 1 }).withMessage('At least one endpoint is required')
+    body("apiName").notEmpty().withMessage("API name is required"),
+    body("baseUrl").isURL().withMessage("Valid base URL is required"),
+    body("endpoints")
+      .isArray({ min: 1 })
+      .withMessage("At least one endpoint is required"),
   ],
   async (req, res) => {
     try {
@@ -855,33 +877,36 @@ router.post('/preview-schema',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
       const apiConfig = req.body;
-      
+
       // Generate OpenAPI schema
-      const openApiSchema = await openApiGeneratorService.generateSchema(apiConfig);
-      
+      const openApiSchema = await openApiGeneratorService.generateSchema(
+        apiConfig
+      );
+
       // Validate the generated schema
-      const validation = await openApiGeneratorService.validateSchema(openApiSchema);
+      const validation = await openApiGeneratorService.validateSchema(
+        openApiSchema
+      );
 
       res.json({
         success: true,
         data: {
           openApiSchema,
-          validation
-        }
+          validation,
+        },
       });
-
     } catch (error) {
-      logger.error('Error generating schema preview:', error);
+      logger.error("Error generating schema preview:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to generate schema preview',
-        message: error.message
+        error: "Failed to generate schema preview",
+        message: error.message,
       });
     }
   }
@@ -930,27 +955,26 @@ router.post('/preview-schema',
  *                       items:
  *                         type: string
  */
-router.post('/validate',
-  async (req, res) => {
-    try {
-      const apiConfig = req.body;
-      const validation = await actionGroupService.validateApiConfiguration(apiConfig);
+router.post("/validate", async (req, res) => {
+  try {
+    const apiConfig = req.body;
+    const validation = await actionGroupService.validateApiConfiguration(
+      apiConfig
+    );
 
-      res.json({
-        success: true,
-        data: validation
-      });
-
-    } catch (error) {
-      logger.error('Error validating API configuration:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to validate API configuration',
-        message: error.message
-      });
-    }
+    res.json({
+      success: true,
+      data: validation,
+    });
+  } catch (error) {
+    logger.error("Error validating API configuration:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to validate API configuration",
+      message: error.message,
+    });
   }
-);
+});
 
 /**
  * @swagger
@@ -1007,10 +1031,13 @@ router.post('/validate',
  *                           status:
  *                             type: string
  */
-router.get('/:actionGroupId/history',
+router.get(
+  "/:actionGroupId/history",
   [
-    param('actionGroupId').notEmpty().withMessage('Action group ID is required'),
-    query('limit').optional().isInt({ min: 1, max: 100 })
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
+    query("limit").optional().isInt({ min: 1, max: 100 }),
   ],
   async (req, res) => {
     try {
@@ -1018,29 +1045,31 @@ router.get('/:actionGroupId/history',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
       const { actionGroupId } = req.params;
       const { limit = 50 } = req.query;
 
-      const history = await actionGroupService.getExecutionHistory(actionGroupId, limit);
+      const history = await actionGroupService.getExecutionHistory(
+        actionGroupId,
+        limit
+      );
 
       res.json({
         success: true,
         data: {
-          executions: history
-        }
+          executions: history,
+        },
       });
-
     } catch (error) {
-      logger.error('Error getting execution history:', error);
+      logger.error("Error getting execution history:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to get execution history',
-        message: error.message
+        error: "Failed to get execution history",
+        message: error.message,
       });
     }
   }
@@ -1085,9 +1114,12 @@ router.get('/:actionGroupId/history',
  *                       type: string
  *                       format: date-time
  */
-router.post('/:actionGroupId/sync',
+router.post(
+  "/:actionGroupId/sync",
   [
-    param('actionGroupId').notEmpty().withMessage('Action group ID is required')
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
   ],
   async (req, res) => {
     try {
@@ -1095,29 +1127,90 @@ router.post('/:actionGroupId/sync',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          error: "Validation failed",
+          details: errors.array(),
         });
       }
 
       const { actionGroupId } = req.params;
-      const result = await actionGroupService.syncActionGroupWithAgent(actionGroupId);
+      const result = await actionGroupService.syncActionGroupWithAgent(
+        actionGroupId
+      );
 
       res.json({
         success: true,
-        message: 'Action group synchronized successfully',
-        data: result
+        message: "Action group synchronized successfully",
+        data: result,
       });
-
     } catch (error) {
-      logger.error('Error syncing action group:', error);
+      logger.error("Error syncing action group:", error);
       res.status(500).json({
         success: false,
-        error: 'Failed to sync action group',
-        message: error.message
+        error: "Failed to sync action group",
+        message: error.message,
       });
     }
   }
 );
+
+/**
+ * @swagger
+ * /api/action-groups/aliases/latest:
+ *   get:
+ *     summary: Get the latest agent alias
+ *     description: Fetch the most recently updated agent alias for the current agent
+ *     tags: [Action Groups]
+ *     responses:
+ *       200:
+ *         description: Latest agent alias
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     aliasId:
+ *                       type: string
+ *                     aliasName:
+ *                       type: string
+ *                     status:
+ *                       type: string
+ *                     createdAt:
+ *                       type: string
+ *                     updatedAt:
+ *                       type: string
+ *       404:
+ *         description: No aliases found
+ *       500:
+ *         description: Server error
+ */
+// Get the latest agent alias (by updatedAt/createdAt)
+router.get("/aliases/latest", async (req, res) => {
+  try {
+    const latestAlias = await actionGroupService.getLatestAgentAlias();
+    if (!latestAlias) {
+      return res.status(404).json({
+        success: false,
+        error: "No aliases found",
+      });
+    }
+    res.json({
+      success: true,
+      data: latestAlias,
+    });
+  } catch (error) {
+    logger.error("Error fetching latest agent alias:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch latest agent alias",
+      message: error.message,
+    });
+  }
+});
 
 module.exports = router;
