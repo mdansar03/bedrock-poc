@@ -438,6 +438,601 @@ router.get("/agent-info", async (req, res) => {
 
 /**
  * @swagger
+ * /api/action-groups/aliases/latest:
+ *   get:
+ *     summary: Get the latest agent alias
+ *     description: Fetch the most recently updated agent alias for the current agent
+ *     tags: [Action Groups]
+ *     responses:
+ *       200:
+ *         description: Action group schema definition
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     schemas:
+ *                       type: object
+ *                       description: Complete schema definitions
+ *                     version:
+ *                       type: string
+ *                       example: "1.0.0"
+ *                     endpoints:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       description: Available action group endpoints
+ */
+router.get("/schema", async (req, res) => {
+  try {
+    const schemas = {
+      ActionGroup: {
+        type: "object",
+        properties: {
+          actionGroupId: {
+            type: "string",
+            description: "Action group identifier"
+          },
+          actionGroupName: {
+            type: "string",
+            description: "Action group name"
+          },
+          description: {
+            type: "string",
+            description: "Action group description"
+          },
+          actionGroupState: {
+            type: "string",
+            enum: ["ENABLED", "DISABLED"],
+            description: "Action group state"
+          },
+          createdAt: {
+            type: "string",
+            format: "date-time",
+            description: "Creation timestamp"
+          },
+          updatedAt: {
+            type: "string",
+            format: "date-time",
+            description: "Last update timestamp"
+          },
+          agentId: {
+            type: "string",
+            description: "Associated agent ID"
+          },
+          lambdaArn: {
+            type: "string",
+            description: "Lambda function ARN for execution"
+          },
+          apiSchema: {
+            type: "object",
+            description: "OpenAPI schema for the action group"
+          }
+        }
+      },
+      ApiConfiguration: {
+        type: "object",
+        required: ["apiName", "baseUrl", "endpoints"],
+        properties: {
+          apiName: {
+            type: "string",
+            description: "Name of the API",
+            example: "Order Tracking API"
+          },
+          description: {
+            type: "string",
+            description: "API description"
+          },
+          baseUrl: {
+            type: "string",
+            format: "uri",
+            description: "Base URL of the API"
+          },
+          endpoints: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                path: {
+                  type: "string",
+                  description: "API endpoint path"
+                },
+                method: {
+                  type: "string",
+                  enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                },
+                description: {
+                  type: "string"
+                },
+                parameters: {
+                  type: "array",
+                  items: {
+                    type: "object"
+                  }
+                }
+              }
+            }
+          },
+          authentication: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["none", "apiKey", "bearer", "basic"]
+              }
+            }
+          }
+        }
+      }
+    };
+
+    const endpoints = [
+      "GET /api/action-groups - List all action groups",
+      "POST /api/action-groups/create - Create new action group",
+      "GET /api/action-groups/{id} - Get specific action group",
+      "PUT /api/action-groups/{id} - Update action group",
+      "DELETE /api/action-groups/{id} - Delete action group",
+      "GET /api/action-groups/{id}/config - Get action group with configuration",
+      "POST /api/action-groups/{id}/test - Test action group",
+      "GET /api/action-groups/{id}/history - Get execution history",
+      "POST /api/action-groups/{id}/sync - Sync with agent",
+      "POST /api/action-groups/preview-schema - Preview OpenAPI schema",
+      "POST /api/action-groups/validate - Validate API configuration",
+      "GET /api/action-groups/agent-info - Get agent information",
+      "GET /api/action-groups/schema - Get schema definitions",
+      "GET /api/action-groups/data - Get comprehensive data",
+      "GET /api/action-groups/templates - Get configuration templates",
+      "GET /api/action-groups/aliases/latest - Get latest agent alias"
+    ];
+
+    res.json({
+      success: true,
+      data: {
+        schemas,
+        version: "1.0.0",
+        endpoints,
+        lastUpdated: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error("Error getting action group schema:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get action group schema",
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/action-groups/data:
+ *   get:
+ *     summary: Get comprehensive action groups data
+ *     description: Returns action groups with additional metadata, statistics, and health information
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: query
+ *         name: includeStats
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include statistics and metadata
+ *       - in: query
+ *         name: includeHistory
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: Include execution history summary
+ *     responses:
+ *       200:
+ *         description: Comprehensive action groups data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     actionGroups:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/ActionGroup'
+ *                     statistics:
+ *                       type: object
+ *                       properties:
+ *                         totalActionGroups:
+ *                           type: integer
+ *                         enabledCount:
+ *                           type: integer
+ *                         disabledCount:
+ *                           type: integer
+ *                         recentlyCreated:
+ *                           type: integer
+ *                         averageExecutionsPerDay:
+ *                           type: number
+ *                     agentInfo:
+ *                       type: object
+ *                     systemHealth:
+ *                       type: object
+ *                       properties:
+ *                         status:
+ *                           type: string
+ *                         lastCheck:
+ *                           type: string
+ *                           format: date-time
+ */
+router.get("/data", async (req, res) => {
+  try {
+    const { includeStats = "true", includeHistory = "false" } = req.query;
+    const includeStatsFlag = includeStats === "true";
+    const includeHistoryFlag = includeHistory === "true";
+
+    // Get basic action groups data
+    const actionGroupsResult = await actionGroupService.listActionGroups();
+    const actionGroups = actionGroupsResult.actionGroups;
+
+    let statistics = null;
+    if (includeStatsFlag) {
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      
+      statistics = {
+        totalActionGroups: actionGroups.length,
+        enabledCount: actionGroups.filter(ag => ag.actionGroupState === "ENABLED").length,
+        disabledCount: actionGroups.filter(ag => ag.actionGroupState === "DISABLED").length,
+        recentlyCreated: actionGroups.filter(ag => {
+          const createdAt = new Date(ag.createdAt || ag.updatedAt || 0);
+          return createdAt > sevenDaysAgo;
+        }).length,
+        averageExecutionsPerDay: 0, // Would need execution tracking to calculate
+        lastCalculated: now.toISOString()
+      };
+    }
+
+    // Get agent information
+    const agentInfo = await actionGroupService.getAgentInfo();
+
+    // Enhanced action groups with additional metadata
+    const enhancedActionGroups = await Promise.all(
+      actionGroups.map(async (ag) => {
+        const enhanced = { ...ag };
+        
+        if (includeHistoryFlag) {
+          try {
+            const history = await actionGroupService.getExecutionHistory(ag.actionGroupId, 5);
+            enhanced.recentExecutions = history.length;
+            enhanced.lastExecution = history.length > 0 ? history[0].timestamp : null;
+          } catch (error) {
+            enhanced.recentExecutions = 0;
+            enhanced.lastExecution = null;
+          }
+        }
+
+        // Add health status
+        enhanced.healthStatus = ag.actionGroupState === "ENABLED" ? "healthy" : "disabled";
+        
+        return enhanced;
+      })
+    );
+
+    const systemHealth = {
+      status: agentInfo.status === "UNKNOWN" ? "warning" : "healthy",
+      lastCheck: new Date().toISOString(),
+      agentConfigured: agentInfo.configured,
+      totalEndpoints: 16 // Number of available endpoints
+    };
+
+    res.json({
+      success: true,
+      data: {
+        actionGroups: enhancedActionGroups,
+        statistics: includeStatsFlag ? statistics : undefined,
+        agentInfo,
+        systemHealth,
+        metadata: {
+          generatedAt: new Date().toISOString(),
+          includeStats: includeStatsFlag,
+          includeHistory: includeHistoryFlag
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error("Error getting comprehensive action groups data:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get comprehensive data",
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/action-groups/templates:
+ *   get:
+ *     summary: Get action group configuration templates
+ *     description: Returns example configurations and templates for creating action groups
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [simple, ecommerce, social, financial, all]
+ *           default: all
+ *         description: Type of templates to return
+ *     responses:
+ *       200:
+ *         description: Configuration templates
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     templates:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           name:
+ *                             type: string
+ *                           category:
+ *                             type: string
+ *                           description:
+ *                             type: string
+ *                           config:
+ *                             $ref: '#/components/schemas/ApiConfiguration'
+ */
+router.get("/templates", async (req, res) => {
+  try {
+    const { type = "all" } = req.query;
+
+    const allTemplates = {
+      simple: {
+        name: "Simple REST API",
+        category: "basic",
+        description: "Basic REST API template with common CRUD operations",
+        config: {
+          apiName: "Simple API",
+          description: "A basic REST API for demonstration purposes",
+          baseUrl: "https://api.example.com",
+          endpoints: [
+            {
+              path: "/items",
+              method: "GET",
+              description: "Get all items",
+              parameters: [
+                {
+                  name: "limit",
+                  type: "integer",
+                  location: "query",
+                  required: false,
+                  description: "Maximum number of items to return"
+                }
+              ],
+              responseExample: '{"items": [{"id": 1, "name": "Item 1"}], "total": 1}'
+            },
+            {
+              path: "/items/{id}",
+              method: "GET",
+              description: "Get item by ID",
+              parameters: [
+                {
+                  name: "id",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Item ID"
+                }
+              ],
+              responseExample: '{"id": "1", "name": "Item 1", "status": "active"}'
+            }
+          ],
+          authentication: {
+            type: "none"
+          }
+        }
+      },
+      ecommerce: {
+        name: "E-commerce Order Tracking",
+        category: "ecommerce",
+        description: "Order tracking and management API for e-commerce platforms",
+        config: {
+          apiName: "E-commerce Order API",
+          description: "API for tracking orders, payments, and shipments",
+          baseUrl: "https://api.ecommerce-store.com",
+          endpoints: [
+            {
+              path: "/orders/{orderId}",
+              method: "GET",
+              description: "Get order details by ID",
+              parameters: [
+                {
+                  name: "orderId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Order ID to track"
+                }
+              ],
+              responseExample: '{"orderId": "ORD123", "status": "shipped", "items": 3, "total": 299.99}'
+            },
+            {
+              path: "/orders/{orderId}/status",
+              method: "GET",
+              description: "Get order status",
+              parameters: [
+                {
+                  name: "orderId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Order ID"
+                }
+              ],
+              responseExample: '{"status": "shipped", "trackingNumber": "TR123456", "estimatedDelivery": "2024-01-25"}'
+            }
+          ],
+          authentication: {
+            type: "apiKey",
+            location: "header",
+            name: "X-API-Key",
+            value: "your-api-key-here"
+          }
+        }
+      },
+      social: {
+        name: "Social Media Analytics",
+        category: "social",
+        description: "Social media analytics and engagement tracking API",
+        config: {
+          apiName: "Social Analytics API",
+          description: "Track social media posts, engagement, and analytics",
+          baseUrl: "https://api.socialanalytics.com",
+          endpoints: [
+            {
+              path: "/posts/{postId}/analytics",
+              method: "GET",
+              description: "Get post analytics",
+              parameters: [
+                {
+                  name: "postId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Social media post ID"
+                }
+              ],
+              responseExample: '{"likes": 150, "shares": 25, "comments": 30, "reach": 5000}'
+            },
+            {
+              path: "/user/{userId}/engagement",
+              method: "GET",
+              description: "Get user engagement metrics",
+              parameters: [
+                {
+                  name: "userId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "User ID"
+                }
+              ],
+              responseExample: '{"totalPosts": 45, "avgLikes": 120, "followerGrowth": 15}'
+            }
+          ],
+          authentication: {
+            type: "bearer",
+            location: "header",
+            name: "Authorization",
+            value: "your-bearer-token-here"
+          }
+        }
+      },
+      financial: {
+        name: "Financial Transactions",
+        category: "financial",
+        description: "Banking and financial transaction tracking API",
+        config: {
+          apiName: "Financial API",
+          description: "Track transactions, balances, and financial data",
+          baseUrl: "https://api.financialservice.com",
+          endpoints: [
+            {
+              path: "/accounts/{accountId}/balance",
+              method: "GET",
+              description: "Get account balance",
+              parameters: [
+                {
+                  name: "accountId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Account ID"
+                }
+              ],
+              responseExample: '{"accountId": "ACC123", "balance": 2500.00, "currency": "USD"}'
+            },
+            {
+              path: "/transactions/{transactionId}",
+              method: "GET",
+              description: "Get transaction details",
+              parameters: [
+                {
+                  name: "transactionId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Transaction ID"
+                }
+              ],
+              responseExample: '{"id": "TXN456", "amount": -50.00, "merchant": "Coffee Shop", "date": "2024-01-20"}'
+            }
+          ],
+          authentication: {
+            type: "apiKey",
+            location: "header",
+            name: "X-Bank-API-Key",
+            value: "secure-bank-api-key"
+          }
+        }
+      }
+    };
+
+    let templates = [];
+    if (type === "all") {
+      templates = Object.values(allTemplates);
+    } else if (allTemplates[type]) {
+      templates = [allTemplates[type]];
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid template type",
+        validTypes: Object.keys(allTemplates).concat(["all"])
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        templates,
+        availableTypes: Object.keys(allTemplates),
+        totalTemplates: templates.length,
+        generatedAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error("Error getting action group templates:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get templates",
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
  * /api/action-groups/{actionGroupId}:
  *   get:
  *     summary: Get action group details
@@ -503,6 +1098,245 @@ router.get(
       res.status(500).json({
         success: false,
         error: "Failed to get action group",
+        message: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/action-groups/{actionGroupId}/debug:
+ *   get:
+ *     summary: Debug action group AWS response
+ *     description: Debug endpoint to see raw AWS response for action group
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: path
+ *         name: actionGroupId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Action group ID
+ */
+router.get(
+  "/:actionGroupId/debug",
+  [
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
+  ],
+  async (req, res) => {
+    try {
+      const { actionGroupId } = req.params;
+      
+      // Direct AWS API call to see raw response
+      const { BedrockAgentClient, GetAgentActionGroupCommand } = require("@aws-sdk/client-bedrock-agent");
+      const client = new BedrockAgentClient({
+        region: process.env.AWS_REGION || "us-east-1",
+      });
+      
+      const command = new GetAgentActionGroupCommand({
+        agentId: process.env.BEDROCK_AGENT_ID,
+        agentVersion: "DRAFT",
+        actionGroupId: actionGroupId,
+      });
+
+      const rawResponse = await client.send(command);
+      
+      res.json({
+        success: true,
+        data: {
+          actionGroupId: actionGroupId,
+          rawResponse: rawResponse,
+          responseKeys: Object.keys(rawResponse),
+          actionGroupKeys: rawResponse.actionGroup ? Object.keys(rawResponse.actionGroup) : null,
+          hasApiSchema: !!(rawResponse.actionGroup && rawResponse.actionGroup.apiSchema),
+          hasActionGroupExecutor: !!(rawResponse.actionGroup && rawResponse.actionGroup.actionGroupExecutor),
+          apiSchema: rawResponse.actionGroup ? rawResponse.actionGroup.apiSchema : null,
+          actionGroupExecutor: rawResponse.actionGroup ? rawResponse.actionGroup.actionGroupExecutor : null
+        }
+      });
+      
+    } catch (error) {
+      logger.error("Error in debug endpoint:", error);
+      res.status(500).json({
+        success: false,
+        error: "Debug failed",
+        message: error.message,
+        stack: error.stack
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/action-groups/{actionGroupId}/schema:
+ *   get:
+ *     summary: Get action group OpenAPI schema
+ *     description: Retrieve the OpenAPI schema for a specific action group
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: path
+ *         name: actionGroupId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Action group ID
+ *     responses:
+ *       200:
+ *         description: Action group OpenAPI schema
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     actionGroupId:
+ *                       type: string
+ *                     actionGroupName:
+ *                       type: string
+ *                     openApiSchema:
+ *                       type: object
+ *                       description: The OpenAPI 3.0 schema for this action group
+ *                     schemaVersion:
+ *                       type: string
+ *                       example: "3.0.0"
+ *       404:
+ *         description: Action group not found
+ */
+router.get(
+  "/:actionGroupId/schema",
+  [
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: "Validation failed",
+          details: errors.array(),
+        });
+      }
+
+      const { actionGroupId } = req.params;
+      
+      // Use the exact same direct AWS call as the working debug endpoint
+      const { BedrockAgentClient, GetAgentActionGroupCommand } = require("@aws-sdk/client-bedrock-agent");
+      const client = new BedrockAgentClient({
+        region: process.env.AWS_REGION || "us-east-1",
+      });
+      
+      const command = new GetAgentActionGroupCommand({
+        agentId: process.env.BEDROCK_AGENT_ID,
+        agentVersion: "DRAFT",
+        actionGroupId: actionGroupId,
+      });
+
+      let rawResponse;
+      let actionGroup;
+      
+      try {
+        rawResponse = await client.send(command);
+        actionGroup = rawResponse.agentActionGroup; // AWS returns 'agentActionGroup' not 'actionGroup'
+        
+        logger.info(`AWS response for ${actionGroupId}:`, {
+          hasResponse: !!rawResponse,
+          responseKeys: rawResponse ? Object.keys(rawResponse) : null,
+          hasActionGroup: !!actionGroup,
+          actionGroupKeys: actionGroup ? Object.keys(actionGroup) : null
+        });
+        
+      } catch (awsError) {
+        logger.error(`AWS API error for ${actionGroupId}:`, {
+          errorName: awsError.name,
+          errorMessage: awsError.message,
+          errorCode: awsError.$metadata?.httpStatusCode
+        });
+        return res.status(500).json({
+          success: false,
+          error: "Failed to retrieve action group from AWS",
+          message: awsError.message
+        });
+      }
+      
+      if (!actionGroup) {
+        logger.warn(`Action group ${actionGroupId} not found in AWS response`);
+        return res.status(404).json({
+          success: false,
+          error: "Action group not found",
+          rawResponse: rawResponse // Add for debugging
+        });
+      }
+
+      let openApiSchema = null;
+      let debugInfo = {};
+      
+      // Debug: Log the full action group structure
+      logger.info(`Action group structure for ${actionGroupId}:`, {
+        keys: Object.keys(actionGroup),
+        hasApiSchema: !!actionGroup.apiSchema,
+        apiSchemaKeys: actionGroup.apiSchema ? Object.keys(actionGroup.apiSchema) : null
+      });
+      
+      // Try to extract the OpenAPI schema from the action group
+      if (actionGroup.apiSchema && actionGroup.apiSchema.payload) {
+        try {
+          openApiSchema = JSON.parse(actionGroup.apiSchema.payload);
+          debugInfo.parseSuccess = true;
+          debugInfo.payloadLength = actionGroup.apiSchema.payload.length;
+        } catch (error) {
+          logger.warn(`Failed to parse OpenAPI schema for action group ${actionGroupId}:`, error.message);
+          openApiSchema = { error: "Failed to parse schema", raw: actionGroup.apiSchema.payload };
+          debugInfo.parseError = error.message;
+        }
+      } else {
+        // Check for alternative schema locations
+        debugInfo.apiSchemaCheck = {
+          hasApiSchema: !!actionGroup.apiSchema,
+          hasPayload: !!(actionGroup.apiSchema && actionGroup.apiSchema.payload),
+          apiSchemaType: typeof actionGroup.apiSchema,
+          payloadType: actionGroup.apiSchema ? typeof actionGroup.apiSchema.payload : null
+        };
+        
+        // Try alternative schema locations that might exist in AWS Bedrock
+        if (actionGroup.functionSchema) {
+          debugInfo.foundFunctionSchema = true;
+          openApiSchema = actionGroup.functionSchema;
+        } else if (actionGroup.actionGroupExecutor && actionGroup.actionGroupExecutor.customControl) {
+          debugInfo.foundCustomControl = true;
+        }
+      }
+
+      res.json({
+        success: true,
+        data: {
+          actionGroupId: actionGroup.actionGroupId,
+          actionGroupName: actionGroup.actionGroupName,
+          openApiSchema: openApiSchema,
+          schemaVersion: openApiSchema?.openapi || "Unknown",
+          hasSchema: !!openApiSchema,
+          retrievedAt: new Date().toISOString(),
+          debugInfo: debugInfo,
+          // Include raw action group data for debugging (remove in production)
+          rawActionGroup: actionGroup
+        },
+      });
+    } catch (error) {
+      logger.error("Error getting action group schema:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to get action group schema",
         message: error.message,
       });
     }
@@ -1152,6 +1986,601 @@ router.post(
     }
   }
 );
+
+/**
+ * @swagger
+ * /api/action-groups/schema:
+ *   get:
+ *     summary: Get action group schema definition
+ *     description: Returns the complete OpenAPI schema definition for action groups and related data structures
+ *     tags: [Action Groups]
+ *     responses:
+ *       200:
+ *         description: Action group schema definition
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     schemas:
+ *                       type: object
+ *                       description: Complete schema definitions
+ *                     version:
+ *                       type: string
+ *                       example: "1.0.0"
+ *                     endpoints:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       description: Available action group endpoints
+ */
+router.get("/schema", async (req, res) => {
+  try {
+    const schemas = {
+      ActionGroup: {
+        type: "object",
+        properties: {
+          actionGroupId: {
+            type: "string",
+            description: "Action group identifier"
+          },
+          actionGroupName: {
+            type: "string",
+            description: "Action group name"
+          },
+          description: {
+            type: "string",
+            description: "Action group description"
+          },
+          actionGroupState: {
+            type: "string",
+            enum: ["ENABLED", "DISABLED"],
+            description: "Action group state"
+          },
+          createdAt: {
+            type: "string",
+            format: "date-time",
+            description: "Creation timestamp"
+          },
+          updatedAt: {
+            type: "string",
+            format: "date-time",
+            description: "Last update timestamp"
+          },
+          agentId: {
+            type: "string",
+            description: "Associated agent ID"
+          },
+          lambdaArn: {
+            type: "string",
+            description: "Lambda function ARN for execution"
+          },
+          apiSchema: {
+            type: "object",
+            description: "OpenAPI schema for the action group"
+          }
+        }
+      },
+      ApiConfiguration: {
+        type: "object",
+        required: ["apiName", "baseUrl", "endpoints"],
+        properties: {
+          apiName: {
+            type: "string",
+            description: "Name of the API",
+            example: "Order Tracking API"
+          },
+          description: {
+            type: "string",
+            description: "API description"
+          },
+          baseUrl: {
+            type: "string",
+            format: "uri",
+            description: "Base URL of the API"
+          },
+          endpoints: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                path: {
+                  type: "string",
+                  description: "API endpoint path"
+                },
+                method: {
+                  type: "string",
+                  enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                },
+                description: {
+                  type: "string"
+                },
+                parameters: {
+                  type: "array",
+                  items: {
+                    type: "object"
+                  }
+                }
+              }
+            }
+          },
+          authentication: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["none", "apiKey", "bearer", "basic"]
+              }
+            }
+          }
+        }
+      }
+    };
+
+    const endpoints = [
+      "GET /api/action-groups - List all action groups",
+      "POST /api/action-groups/create - Create new action group",
+      "GET /api/action-groups/{id} - Get specific action group",
+      "PUT /api/action-groups/{id} - Update action group",
+      "DELETE /api/action-groups/{id} - Delete action group",
+      "GET /api/action-groups/{id}/config - Get action group with configuration",
+      "POST /api/action-groups/{id}/test - Test action group",
+      "GET /api/action-groups/{id}/history - Get execution history",
+      "POST /api/action-groups/{id}/sync - Sync with agent",
+      "POST /api/action-groups/preview-schema - Preview OpenAPI schema",
+      "POST /api/action-groups/validate - Validate API configuration",
+      "GET /api/action-groups/agent-info - Get agent information",
+      "GET /api/action-groups/schema - Get schema definitions",
+      "GET /api/action-groups/data - Get comprehensive data",
+      "GET /api/action-groups/templates - Get configuration templates",
+      "GET /api/action-groups/aliases/latest - Get latest agent alias"
+    ];
+
+    res.json({
+      success: true,
+      data: {
+        schemas,
+        version: "1.0.0",
+        endpoints,
+        lastUpdated: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error("Error getting action group schema:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get action group schema",
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/action-groups/data:
+ *   get:
+ *     summary: Get comprehensive action groups data
+ *     description: Returns action groups with additional metadata, statistics, and health information
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: query
+ *         name: includeStats
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include statistics and metadata
+ *       - in: query
+ *         name: includeHistory
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: Include execution history summary
+ *     responses:
+ *       200:
+ *         description: Comprehensive action groups data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     actionGroups:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/ActionGroup'
+ *                     statistics:
+ *                       type: object
+ *                       properties:
+ *                         totalActionGroups:
+ *                           type: integer
+ *                         enabledCount:
+ *                           type: integer
+ *                         disabledCount:
+ *                           type: integer
+ *                         recentlyCreated:
+ *                           type: integer
+ *                         averageExecutionsPerDay:
+ *                           type: number
+ *                     agentInfo:
+ *                       type: object
+ *                     systemHealth:
+ *                       type: object
+ *                       properties:
+ *                         status:
+ *                           type: string
+ *                         lastCheck:
+ *                           type: string
+ *                           format: date-time
+ */
+router.get("/data", async (req, res) => {
+  try {
+    const { includeStats = "true", includeHistory = "false" } = req.query;
+    const includeStatsFlag = includeStats === "true";
+    const includeHistoryFlag = includeHistory === "true";
+
+    // Get basic action groups data
+    const actionGroupsResult = await actionGroupService.listActionGroups();
+    const actionGroups = actionGroupsResult.actionGroups;
+
+    let statistics = null;
+    if (includeStatsFlag) {
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      
+      statistics = {
+        totalActionGroups: actionGroups.length,
+        enabledCount: actionGroups.filter(ag => ag.actionGroupState === "ENABLED").length,
+        disabledCount: actionGroups.filter(ag => ag.actionGroupState === "DISABLED").length,
+        recentlyCreated: actionGroups.filter(ag => {
+          const createdAt = new Date(ag.createdAt || ag.updatedAt || 0);
+          return createdAt > sevenDaysAgo;
+        }).length,
+        averageExecutionsPerDay: 0, // Would need execution tracking to calculate
+        lastCalculated: now.toISOString()
+      };
+    }
+
+    // Get agent information
+    const agentInfo = await actionGroupService.getAgentInfo();
+
+    // Enhanced action groups with additional metadata
+    const enhancedActionGroups = await Promise.all(
+      actionGroups.map(async (ag) => {
+        const enhanced = { ...ag };
+        
+        if (includeHistoryFlag) {
+          try {
+            const history = await actionGroupService.getExecutionHistory(ag.actionGroupId, 5);
+            enhanced.recentExecutions = history.length;
+            enhanced.lastExecution = history.length > 0 ? history[0].timestamp : null;
+          } catch (error) {
+            enhanced.recentExecutions = 0;
+            enhanced.lastExecution = null;
+          }
+        }
+
+        // Add health status
+        enhanced.healthStatus = ag.actionGroupState === "ENABLED" ? "healthy" : "disabled";
+        
+        return enhanced;
+      })
+    );
+
+    const systemHealth = {
+      status: agentInfo.status === "UNKNOWN" ? "warning" : "healthy",
+      lastCheck: new Date().toISOString(),
+      agentConfigured: agentInfo.configured,
+      totalEndpoints: 16 // Number of available endpoints
+    };
+
+    res.json({
+      success: true,
+      data: {
+        actionGroups: enhancedActionGroups,
+        statistics: includeStatsFlag ? statistics : undefined,
+        agentInfo,
+        systemHealth,
+        metadata: {
+          generatedAt: new Date().toISOString(),
+          includeStats: includeStatsFlag,
+          includeHistory: includeHistoryFlag
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error("Error getting comprehensive action groups data:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get comprehensive data",
+      message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/action-groups/templates:
+ *   get:
+ *     summary: Get action group configuration templates
+ *     description: Returns example configurations and templates for creating action groups
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [simple, ecommerce, social, financial, all]
+ *           default: all
+ *         description: Type of templates to return
+ *     responses:
+ *       200:
+ *         description: Configuration templates
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     templates:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           name:
+ *                             type: string
+ *                           category:
+ *                             type: string
+ *                           description:
+ *                             type: string
+ *                           config:
+ *                             $ref: '#/components/schemas/ApiConfiguration'
+ */
+router.get("/templates", async (req, res) => {
+  try {
+    const { type = "all" } = req.query;
+
+    const allTemplates = {
+      simple: {
+        name: "Simple REST API",
+        category: "basic",
+        description: "Basic REST API template with common CRUD operations",
+        config: {
+          apiName: "Simple API",
+          description: "A basic REST API for demonstration purposes",
+          baseUrl: "https://api.example.com",
+          endpoints: [
+            {
+              path: "/items",
+              method: "GET",
+              description: "Get all items",
+              parameters: [
+                {
+                  name: "limit",
+                  type: "integer",
+                  location: "query",
+                  required: false,
+                  description: "Maximum number of items to return"
+                }
+              ],
+              responseExample: '{"items": [{"id": 1, "name": "Item 1"}], "total": 1}'
+            },
+            {
+              path: "/items/{id}",
+              method: "GET",
+              description: "Get item by ID",
+              parameters: [
+                {
+                  name: "id",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Item ID"
+                }
+              ],
+              responseExample: '{"id": "1", "name": "Item 1", "status": "active"}'
+            }
+          ],
+          authentication: {
+            type: "none"
+          }
+        }
+      },
+      ecommerce: {
+        name: "E-commerce Order Tracking",
+        category: "ecommerce",
+        description: "Order tracking and management API for e-commerce platforms",
+        config: {
+          apiName: "E-commerce Order API",
+          description: "API for tracking orders, payments, and shipments",
+          baseUrl: "https://api.ecommerce-store.com",
+          endpoints: [
+            {
+              path: "/orders/{orderId}",
+              method: "GET",
+              description: "Get order details by ID",
+              parameters: [
+                {
+                  name: "orderId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Order ID to track"
+                }
+              ],
+              responseExample: '{"orderId": "ORD123", "status": "shipped", "items": 3, "total": 299.99}'
+            },
+            {
+              path: "/orders/{orderId}/status",
+              method: "GET",
+              description: "Get order status",
+              parameters: [
+                {
+                  name: "orderId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Order ID"
+                }
+              ],
+              responseExample: '{"status": "shipped", "trackingNumber": "TR123456", "estimatedDelivery": "2024-01-25"}'
+            }
+          ],
+          authentication: {
+            type: "apiKey",
+            location: "header",
+            name: "X-API-Key",
+            value: "your-api-key-here"
+          }
+        }
+      },
+      social: {
+        name: "Social Media Analytics",
+        category: "social",
+        description: "Social media analytics and engagement tracking API",
+        config: {
+          apiName: "Social Analytics API",
+          description: "Track social media posts, engagement, and analytics",
+          baseUrl: "https://api.socialanalytics.com",
+          endpoints: [
+            {
+              path: "/posts/{postId}/analytics",
+              method: "GET",
+              description: "Get post analytics",
+              parameters: [
+                {
+                  name: "postId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Social media post ID"
+                }
+              ],
+              responseExample: '{"likes": 150, "shares": 25, "comments": 30, "reach": 5000}'
+            },
+            {
+              path: "/user/{userId}/engagement",
+              method: "GET",
+              description: "Get user engagement metrics",
+              parameters: [
+                {
+                  name: "userId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "User ID"
+                }
+              ],
+              responseExample: '{"totalPosts": 45, "avgLikes": 120, "followerGrowth": 15}'
+            }
+          ],
+          authentication: {
+            type: "bearer",
+            location: "header",
+            name: "Authorization",
+            value: "your-bearer-token-here"
+          }
+        }
+      },
+      financial: {
+        name: "Financial Transactions",
+        category: "financial",
+        description: "Banking and financial transaction tracking API",
+        config: {
+          apiName: "Financial API",
+          description: "Track transactions, balances, and financial data",
+          baseUrl: "https://api.financialservice.com",
+          endpoints: [
+            {
+              path: "/accounts/{accountId}/balance",
+              method: "GET",
+              description: "Get account balance",
+              parameters: [
+                {
+                  name: "accountId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Account ID"
+                }
+              ],
+              responseExample: '{"accountId": "ACC123", "balance": 2500.00, "currency": "USD"}'
+            },
+            {
+              path: "/transactions/{transactionId}",
+              method: "GET",
+              description: "Get transaction details",
+              parameters: [
+                {
+                  name: "transactionId",
+                  type: "string",
+                  location: "path",
+                  required: true,
+                  description: "Transaction ID"
+                }
+              ],
+              responseExample: '{"id": "TXN456", "amount": -50.00, "merchant": "Coffee Shop", "date": "2024-01-20"}'
+            }
+          ],
+          authentication: {
+            type: "apiKey",
+            location: "header",
+            name: "X-Bank-API-Key",
+            value: "secure-bank-api-key"
+          }
+        }
+      }
+    };
+
+    let templates = [];
+    if (type === "all") {
+      templates = Object.values(allTemplates);
+    } else if (allTemplates[type]) {
+      templates = [allTemplates[type]];
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid template type",
+        validTypes: Object.keys(allTemplates).concat(["all"])
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        templates,
+        availableTypes: Object.keys(allTemplates),
+        totalTemplates: templates.length,
+        generatedAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error("Error getting action group templates:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get templates",
+      message: error.message
+    });
+  }
+});
 
 /**
  * @swagger

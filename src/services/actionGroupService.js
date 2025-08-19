@@ -919,23 +919,51 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
             });
 
             const detailResponse = await this.bedrockAgentClient.send(command);
+            
+            // Debug: Log more detailed response structure
+            logger.info(`Detailed response for ${actionGroupId}:`, {
+              responseKeys: Object.keys(detailResponse),
+              hasAgentActionGroup: !!detailResponse.agentActionGroup,
+              actionGroupKeys: detailResponse.agentActionGroup ? Object.keys(detailResponse.agentActionGroup) : null,
+              hasApiSchema: !!(detailResponse.agentActionGroup && detailResponse.agentActionGroup.apiSchema),
+              hasFunctionSchema: !!(detailResponse.agentActionGroup && detailResponse.agentActionGroup.functionSchema),
+              apiSchemaKeys: (detailResponse.agentActionGroup && detailResponse.agentActionGroup.apiSchema) 
+                ? Object.keys(detailResponse.agentActionGroup.apiSchema) : null,
+              hasPayload: !!(detailResponse.agentActionGroup && detailResponse.agentActionGroup.apiSchema && detailResponse.agentActionGroup.apiSchema.payload)
+            });
+            
+            // If we have a schema, log a snippet of it
+            if (detailResponse.agentActionGroup && detailResponse.agentActionGroup.apiSchema && detailResponse.agentActionGroup.apiSchema.payload) {
+              logger.info(`API Schema payload found for ${actionGroupId}:`, {
+                payloadLength: detailResponse.agentActionGroup.apiSchema.payload.length,
+                payloadStart: detailResponse.agentActionGroup.apiSchema.payload.substring(0, 100)
+              });
+            }
+            
             logger.info(
               `Enhanced action group ${actionGroupId} with detailed information`
             );
 
-            // Merge list data with detailed data
-            return {
-              ...actionGroup,
-              ...detailResponse.actionGroup,
-              // Ensure we keep the basic fields from list in case detailed call has issues
-              actionGroupId: actionGroup.actionGroupId,
-              actionGroupName: actionGroup.actionGroupName,
-              actionGroupState: actionGroup.actionGroupState,
-            };
+            // Return the detailed response directly - AWS uses 'agentActionGroup' not 'actionGroup'
+            const detailedActionGroup = detailResponse.agentActionGroup;
+            
+            // Debug: Log what we're actually returning
+            logger.info(`Returning detailed action group for ${actionGroupId}:`, {
+              keys: Object.keys(detailedActionGroup),
+              hasApiSchema: !!detailedActionGroup.apiSchema,
+              hasApiSchemaPayload: !!(detailedActionGroup.apiSchema && detailedActionGroup.apiSchema.payload),
+              apiSchemaType: typeof detailedActionGroup.apiSchema
+            });
+            
+            return detailedActionGroup;
           } catch (detailError) {
-            logger.warn(
-              `Could not get detailed info for ${actionGroupId}, using list data:`,
-              detailError.message
+            logger.error(
+              `Could not get detailed info for ${actionGroupId}:`,
+              {
+                errorName: detailError.name,
+                errorMessage: detailError.message,
+                errorStack: detailError.stack
+              }
             );
             return actionGroup;
           }
@@ -958,7 +986,7 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
       logger.info(
         `Successfully retrieved action group via direct call: ${actionGroupId}`
       );
-      return response.actionGroup;
+      return response.agentActionGroup; // AWS uses 'agentActionGroup' not 'actionGroup'
     } catch (error) {
       logger.error(`Error getting action group ${actionGroupId}:`, {
         errorName: error.name,

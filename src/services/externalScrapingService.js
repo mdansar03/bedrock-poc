@@ -116,6 +116,7 @@ class ExternalScrapingService {
       // Prepare request for external scraping service
       const requestPayload = {
         url: cleanUrl,
+        includeJavaScript: false,
         // selectors: {
         //   title: options.titleSelector || 'title, h1',
         //   description: options.descriptionSelector || 'meta[name="description"], meta[property="og:description"]',
@@ -620,6 +621,10 @@ class ExternalScrapingService {
     $('[class*="osano"], [id*="osano"]').remove(); // Remove Osano cookie consent
     $('.visually-hidden, .sr-only, .hidden').remove(); // Remove hidden elements
     
+    // Remove JSON-LD structured data scripts
+    $('script[type="application/ld+json"]').remove();
+    $('script[type="application/json"]').remove();
+    
     // Remove form elements that often contain technical noise
     $('form, input, select, textarea, button').remove();
     
@@ -656,6 +661,8 @@ class ExternalScrapingService {
         uppercaseHeadings: false,
         selectors: [
           { selector: 'script', format: 'skip' },
+          { selector: 'script[type="application/ld+json"]', format: 'skip' },
+          { selector: 'script[type="application/json"]', format: 'skip' },
           { selector: 'style', format: 'skip' },
           { selector: 'nav', format: 'skip' },
           { selector: 'header', format: 'skip' },
@@ -666,7 +673,9 @@ class ExternalScrapingService {
           { selector: '[class*="osano"]', format: 'skip' },
           { selector: '[class*="cookie"]', format: 'skip' },
           { selector: '.visually-hidden', format: 'skip' },
-          { selector: '.sr-only', format: 'skip' }
+          { selector: '.sr-only', format: 'skip' },
+          { selector: 'noscript', format: 'skip' },
+          { selector: 'link', format: 'skip' }
         ]
       });
     } else {
@@ -710,10 +719,17 @@ class ExternalScrapingService {
           uppercaseHeadings: false,
           selectors: [
             { selector: 'script', format: 'skip' },
+            { selector: 'script[type="application/ld+json"]', format: 'skip' },
+            { selector: 'script[type="application/json"]', format: 'skip' },
             { selector: 'style', format: 'skip' },
+            { selector: 'nav', format: 'skip' },
+            { selector: 'header', format: 'skip' },
+            { selector: 'footer', format: 'skip' },
             { selector: 'form', format: 'skip' },
             { selector: 'input', format: 'skip' },
-            { selector: 'button', format: 'skip' }
+            { selector: 'button', format: 'skip' },
+            { selector: 'noscript', format: 'skip' },
+            { selector: 'link', format: 'skip' }
           ]
         });
       }
@@ -792,6 +808,8 @@ class ExternalScrapingService {
         uppercaseHeadings: false,
         selectors: [
           { selector: 'script', format: 'skip' },
+          { selector: 'script[type="application/ld+json"]', format: 'skip' },
+          { selector: 'script[type="application/json"]', format: 'skip' },
           { selector: 'style', format: 'skip' },
           { selector: 'nav', format: 'skip' },
           { selector: 'header', format: 'skip' },
@@ -800,7 +818,9 @@ class ExternalScrapingService {
           { selector: 'input', format: 'skip' },
           { selector: 'button', format: 'skip' },
           { selector: '[class*="osano"]', format: 'skip' },
-          { selector: '[class*="cookie"]', format: 'skip' }
+          { selector: '[class*="cookie"]', format: 'skip' },
+          { selector: 'noscript', format: 'skip' },
+          { selector: 'link', format: 'skip' }
         ]
       });
       
@@ -851,6 +871,16 @@ class ExternalScrapingService {
     
     let cleaned = text;
     
+    // Remove JSON-LD structured data completely
+    cleaned = cleaned.replace(/\{\s*["']@context["'][\s\S]*?\}/gi, '');
+    cleaned = cleaned.replace(/\{\s*["']@type["'][\s\S]*?\}/gi, '');
+    cleaned = cleaned.replace(/\{\s*["']@id["'][\s\S]*?\}/gi, '');
+    
+    // Remove script references and metadata
+    cleaned = cleaned.replace(/JAVASCRIPT CONTENT[\s\S]*$/gi, '');
+    cleaned = cleaned.replace(/(EXTERNAL|INLINE)\s+SCRIPT\s+\d+/gi, '');
+    cleaned = cleaned.replace(/--- Source:\s+Type:\s+[\w\/]+[\s\S]*$/gi, '');
+    
     // Remove embedded script data sections completely - enhanced pattern
     cleaned = cleaned.replace(/---EMBEDDED SCRIPT DATA---[\s\S]*?(?=---[^-]|$)/gi, '');
     cleaned = cleaned.replace(/---[\s\S]*?---/gi, ''); // Remove any remaining --- sections
@@ -858,15 +888,28 @@ class ExternalScrapingService {
     // Remove script blocks and any remaining JavaScript code - more aggressive
     cleaned = cleaned.replace(/<script[\s\S]*?<\/script>/gi, '');
     cleaned = cleaned.replace(/\bvar\s+\w+[\s\S]*?;/gi, ''); // Remove var declarations
+    cleaned = cleaned.replace(/\blet\s+\w+[\s\S]*?;/gi, ''); // Remove let declarations  
+    cleaned = cleaned.replace(/\bconst\s+\w+[\s\S]*?;/gi, ''); // Remove const declarations
     cleaned = cleaned.replace(/\bfunction\s+\w+[\s\S]*?\}/gi, ''); // Remove function definitions
     cleaned = cleaned.replace(/\$\([^)]*\)[\s\S]*?;/gi, ''); // Remove jQuery calls
     cleaned = cleaned.replace(/document\.[^;]*;?/gi, ''); // Remove document calls
     cleaned = cleaned.replace(/window\.[^;]*;?/gi, ''); // Remove window calls
+    cleaned = cleaned.replace(/elementorFrontend[\s\S]*?;/gi, ''); // Remove elementor code
+    
+    // Remove JavaScript operators and syntax patterns
+    cleaned = cleaned.replace(/=>/gi, ''); // Arrow functions
+    cleaned = cleaned.replace(/\{\s*\}/gi, ''); // Empty objects
+    cleaned = cleaned.replace(/\[\s*\]/gi, ''); // Empty arrays
+    cleaned = cleaned.replace(/\w+\s*=\s*\w+\s*=>/gi, ''); // Variable assignments with arrows
+    cleaned = cleaned.replace(/\w+\.\w+\s*=\s*[^;]*;?/gi, ''); // Property assignments
     
     // Remove JavaScript patterns more selectively
     cleaned = cleaned.replace(/\bvar\s+\w+\s*=\s*[^;]*;?/gi, ''); // Variable assignments starting with var
+    cleaned = cleaned.replace(/\blet\s+\w+\s*=\s*[^;]*;?/gi, ''); // Variable assignments starting with let
+    cleaned = cleaned.replace(/\bconst\s+\w+\s*=\s*[^;]*;?/gi, ''); // Variable assignments starting with const
     cleaned = cleaned.replace(/for\s*\([^)]*\)[^}]*\}/gi, ''); // for loops
     cleaned = cleaned.replace(/if\s*\([^)]*\)[^}]*\}/gi, ''); // if statements
+    cleaned = cleaned.replace(/else\s*\{[^}]*\}/gi, ''); // else blocks
     cleaned = cleaned.replace(/\w+\.\w+\([^)]*\)/gi, ''); // Object method calls like document.getElementById
     
     // Remove only code-like parentheses, not natural language ones
@@ -884,6 +927,44 @@ class ExternalScrapingService {
     
     // Remove developer/technical noise more comprehensively
     const technicalPatterns = [
+      // Remove JSON-LD patterns more comprehensively
+      /"@context"[\s\S]*?"}/gi,
+      /"@type"[\s\S]*?"}/gi,
+      /"@id"[\s\S]*?"}/gi,
+      /"isPartOf"[\s\S]*?"}/gi,
+      /"primaryImageOfPage"[\s\S]*?"}/gi,
+      /"breadcrumb"[\s\S]*?"}/gi,
+      /"inLanguage"[\s\S]*?"}/gi,
+      /"potentialAction"[\s\S]*?\]/gi,
+      /"ImageObject"[\s\S]*?"}/gi,
+      /"BreadcrumbList"[\s\S]*?"}/gi,
+      /"ReadAction"[\s\S]*?\]/gi,
+      
+      // Remove script metadata and references
+      /JAVASCRIPT CONTENT[\s\S]*/gi,
+      /(EXTERNAL|INLINE)\s+SCRIPT\s+\d+/gi,
+      /--- Source:\s+Type:[\s\S]*$/gi,
+      /Type:\s+text\/javascript[\s\S]*$/gi,
+      
+      // Remove JavaScript code fragments  
+      /let\s+\w+\s*=/gi,
+      /const\s+\w+\s*=/gi,
+      /var\s+\w+\s*=/gi,
+      /\w+\s*=\s*\w+\s*=>/gi,
+      /=>\s*\{/gi,
+      /\}\s*\)/gi,
+      /\)\s*=>/gi,
+      /curr_item\./gi,
+      /mega_item/gi,
+      /mega_content/gi,
+      /elementorFrontend/gi,
+      /\.style\.display/gi,
+      /ret_str/gi,
+      /t_selector_options/gi,
+      /phone_prefix_selectors/gi,
+      /phoneNumberField/gi,
+      /parentElement/gi,
+      
       // Remove common developer patterns
       /MM_\w+\([^)]*\)/gi, // Legacy browser functions
       /\bretries?:\s*\d+/gi,
@@ -941,6 +1022,16 @@ class ExternalScrapingService {
       cleaned = cleaned.replace(pattern, '');
     });
     
+    // Additional aggressive cleaning for remaining structured data and code fragments
+    cleaned = cleaned.replace(/\{[^}]*@[^}]*\}/gi, ''); // Any remaining JSON-LD objects
+    cleaned = cleaned.replace(/\\"[^"]*\\"/gi, ''); // Escaped quotes in JSON
+    cleaned = cleaned.replace(/\\u[0-9a-fA-F]{4}/gi, ''); // Unicode escape sequences
+    cleaned = cleaned.replace(/[\{\}\[\]]/gi, ''); // Remove remaining braces and brackets that might be code
+    cleaned = cleaned.replace(/[;,]\s*$/gmi, ''); // Remove trailing semicolons and commas at end of lines
+    cleaned = cleaned.replace(/^\s*[;,]\s*/gmi, ''); // Remove leading semicolons and commas at start of lines
+    cleaned = cleaned.replace(/\s*(=|=>|::|\|\||\&\&)\s*/gi, ' '); // Remove operators
+    cleaned = cleaned.replace(/\s*(\(|\))\s*/gi, ' '); // Clean up remaining parentheses with spacing
+    
     // Remove email addresses and any remaining URLs
     cleaned = cleaned.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '');
     
@@ -950,11 +1041,30 @@ class ExternalScrapingService {
     cleaned = cleaned.replace(/\s+\n/g, '\n');
     cleaned = cleaned.replace(/\n\s+/g, '\n');
     
-    // Remove lines that are mostly punctuation or symbols
+    // Remove lines that are mostly punctuation or symbols, or contain code patterns
     cleaned = cleaned.split('\n')
       .filter(line => {
         const trimmed = line.trim();
         if (trimmed.length < 3) return false;
+        
+        // Skip lines that look like code or structured data
+        const codePatterns = [
+          /@\w+/,  // @context, @type, etc.
+          /^\s*[\{\}\[\],;]/,  // Lines starting with code punctuation
+          /=>/,  // Arrow functions
+          /\w+\.\w+\s*=/,  // Property assignments
+          /^\s*(let|var|const|function)\s+/,  // Variable/function declarations
+          /(EXTERNAL|INLINE)\s+SCRIPT/,  // Script references
+          /Type:\s*text\/javascript/,  // Script type declarations
+          /JAVASCRIPT\s+CONTENT/,  // Script content markers
+          /elementorFrontend/,  // Specific framework code
+          /curr_item|mega_item|ret_str/  // Specific variable names from the sample
+        ];
+        
+        if (codePatterns.some(pattern => pattern.test(trimmed))) {
+          return false;
+        }
+        
         const alphaChars = (trimmed.match(/[a-zA-Z]/g) || []).length;
         return alphaChars / trimmed.length > 0.3; // At least 30% alphabetic characters
       })
