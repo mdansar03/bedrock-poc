@@ -509,7 +509,7 @@ export const dataManagementAPI = {
   },
 };
 
-// Action Group API functions
+// FIXED: Action Group API functions with correct endpoints
 export const actionGroupAPI = {
   // Create a new action group
   createActionGroup: async (apiConfig) => {
@@ -547,6 +547,18 @@ export const actionGroupAPI = {
   // Delete action group
   deleteActionGroup: async (actionGroupId) => {
     const response = await api.delete(`/action-groups/${actionGroupId}`);
+    return response.data;
+  },
+
+  // FIXED: Enable action group - use correct endpoint
+  enableActionGroup: async (actionGroupId) => {
+    const response = await api.post(`/action-groups/${actionGroupId}/enabled`);
+    return response.data;
+  },
+
+  // FIXED: Disable action group - use correct endpoint
+  disableActionGroup: async (actionGroupId) => {
+    const response = await api.post(`/action-groups/${actionGroupId}/disabled`);
     return response.data;
   },
 
@@ -588,22 +600,6 @@ export const actionGroupAPI = {
   // Sync action group with agent
   syncWithAgent: async (actionGroupId) => {
     const response = await api.post(`/action-groups/${actionGroupId}/sync`);
-    return response.data;
-  },
-
-  // Enable action group
-  enableActionGroup: async (actionGroupId) => {
-    const response = await api.put(`/action-groups/${actionGroupId}`, {
-      actionGroupState: "ENABLED",
-    });
-    return response.data;
-  },
-
-  // Disable action group
-  disableActionGroup: async (actionGroupId) => {
-    const response = await api.put(`/action-groups/${actionGroupId}`, {
-      actionGroupState: "DISABLED",
-    });
     return response.data;
   },
 };

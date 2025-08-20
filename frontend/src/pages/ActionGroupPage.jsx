@@ -41,6 +41,7 @@ const ActionGroupPage = () => {
   const [isDeleting, setIsDeleting] = useState(null); // Track which action group is being deleted
   const [aliasName, setAliasName] = useState("");
   const [aliasError, setAliasError] = useState("");
+  const [isToggling, setIsToggling] = useState(null);
 
   useEffect(() => {
     loadAgentInfo();
@@ -236,59 +237,122 @@ const ActionGroupPage = () => {
     }
   };
 
+//  handleToggleActionGroup function 
+const handleToggleActionGroup = async (actionGroupId, currentState) => {
+  // Prevent multiple simultaneous operations
+  if (isToggling) {
+    console.log("Another operation in progress, skipping...");
+    return;
+  }
+
+  setIsToggling(actionGroupId);
+  
+  try {
+    let response;
+    const isCurrentlyEnabled = currentState === "ENABLED";
+    
+    console.log(`Action Group: ${actionGroupId}, Current State: ${currentState}`);
+    
+    if (isCurrentlyEnabled) {
+      console.log(`Disabling action group: ${actionGroupId}`);
+      // FIXED: Back to using API utility (which now calls correct endpoint)
+      response = await actionGroupAPI.disableActionGroup(actionGroupId);
+    } else {
+      console.log(`Enabling action group: ${actionGroupId}`);
+      // FIXED: Back to using API utility (which now calls correct endpoint)
+      response = await actionGroupAPI.enableActionGroup(actionGroupId);
+    }
+
+    console.log("API Response:", response);
+
+    if (response && response.success) {
+      // Wait a moment for AWS changes to propagate
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Refresh the action groups list to reflect changes
+      await loadExistingActionGroups();
+      
+      const action = isCurrentlyEnabled ? "disabled" : "enabled";
+      const message = isCurrentlyEnabled 
+        ? "Action group disabled successfully" 
+        : "Action group enabled successfully (others disabled)";
+      
+      alert(message);
+    } else {
+      throw new Error(response?.error || response?.message || "Unknown error occurred");
+    }
+  } catch (error) {
+    console.error("Toggle action group error:", error);
+    
+    let errorMessage = `Failed to ${currentState === "ENABLED" ? "disable" : "enable"} action group: `;
+    
+    // Handle different types of errors
+    if (error.response?.status === 404) {
+      errorMessage += "Action group not found. It may have been deleted.";
+      // Refresh the list to remove stale entries
+      await loadExistingActionGroups();
+    } else if (error.response?.data?.message) {
+      errorMessage += error.response.data.message;
+    } else if (error.response?.data?.error) {
+      errorMessage += error.response.data.error;
+    } else if (error.message) {
+      errorMessage += error.message;
+    } else {
+      errorMessage += "Unknown error occurred";
+    }
+    
+    alert(errorMessage);
+    
+    // Refresh the list anyway to get current state
+    try {
+      await loadExistingActionGroups();
+    } catch (refreshError) {
+      console.error("Failed to refresh action groups list:", refreshError);
+    }
+  } finally {
+    setIsToggling(null);
+  }
+};
+
   const handleDeleteActionGroup = async (actionGroupId) => {
     const actionGroup = existingActionGroups.find(
       (ag) => ag.actionGroupId === actionGroupId
     );
     const isEnabled = actionGroup?.actionGroupState === "ENABLED";
 
-    let confirmMessage = "Are you sure you want to delete this action group?";
+    let confirmMessage =
+      " Are you sure you want to PERMANENTLY DELETE this action group?";
+    confirmMessage += "\n\n This action cannot be undone!";
+    confirmMessage += `\n📝 Action Group: ${
+      actionGroup?.actionGroupName || actionGroupId
+    }`;
     if (isEnabled) {
       confirmMessage +=
-        "\n\nNote: This action group is currently ENABLED and will be automatically disabled before deletion.";
+        "\n\n🔴 Note: This action group is currently ENABLED and will be automatically disabled before deletion.";
     }
 
     if (confirm(confirmMessage)) {
       setIsDeleting(actionGroupId);
       try {
-        const response = await actionGroupAPI.deleteActionGroup(actionGroupId);
-        if (response.success) {
-          await loadExistingActionGroups();
-          alert(
-            "Action group deleted successfully" +
-              (isEnabled ? " (automatically disabled first)" : "")
-          );
-        } else {
-          alert("Failed to delete action group: " + response.error);
-        }
+        await actionGroupAPI.deleteActionGroup(actionGroupId);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await loadExistingActionGroups();
+        alert("🎉 Action group deleted successfully!");
       } catch (error) {
-        alert("Error deleting action group: " + error.message);
+        let errorMessage = "❌ Error deleting action group: ";
+        if (error.response?.data?.message) {
+          errorMessage += error.response.data.message;
+        } else if (error.response?.data?.error) {
+          errorMessage += error.response.data.error;
+        } else if (error.message) {
+          errorMessage += error.message;
+        } else {
+          errorMessage += "Unknown error occurred";
+        }
+        alert(errorMessage);
       } finally {
         setIsDeleting(null);
       }
-    }
-  };
-
-  const handleToggleActionGroup = async (actionGroupId, currentState) => {
-    const newState = currentState === "ENABLED" ? "DISABLED" : "ENABLED";
-    const actionName = newState === "ENABLED" ? "enable" : "disable";
-
-    try {
-      let response;
-      if (newState === "ENABLED") {
-        response = await actionGroupAPI.enableActionGroup(actionGroupId);
-      } else {
-        response = await actionGroupAPI.disableActionGroup(actionGroupId);
-      }
-
-      if (response.success) {
-        await loadExistingActionGroups();
-        alert(`Action group ${actionName}d successfully`);
-      } else {
-        alert(`Failed to ${actionName} action group: ${response.error}`);
-      }
-    } catch (error) {
-      alert(`Error ${actionName}ing action group: ${error.message}`);
     }
   };
 
@@ -1179,13 +1243,18 @@ const ActionGroupPage = () => {
                               actionGroup.actionGroupState
                             )
                           }
+                          disabled={isToggling === actionGroup.actionGroupId}
                           className={`px-3 py-1 rounded text-sm font-medium ${
-                            actionGroup.actionGroupState === "ENABLED"
+                            isToggling === actionGroup.actionGroupId
+                              ? "bg-gray-400 text-gray-600 cursor-not-allowed"
+                              : actionGroup.actionGroupState === "ENABLED"
                               ? "bg-orange-500 text-white hover:bg-orange-600"
                               : "bg-green-500 text-white hover:bg-green-600"
                           }`}
                         >
-                          {actionGroup.actionGroupState === "ENABLED"
+                          {isToggling === actionGroup.actionGroupId
+                            ? "Processing..."
+                            : actionGroup.actionGroupState === "ENABLED"
                             ? "Disable"
                             : "Enable"}
                         </button>

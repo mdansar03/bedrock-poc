@@ -889,6 +889,66 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
   }
 
   /**
+   * Utility method to fix multiple ENABLED action groups
+   * Run this once to clean up the current state
+   */
+  async fixMultipleEnabledActionGroups() {
+    try {
+      logger.info("🔧 Fixing multiple ENABLED action groups...");
+
+      const allGroups = await this.listActionGroups();
+      const enabledGroups = allGroups.actionGroups.filter(
+        (ag) => ag.actionGroupState === "ENABLED"
+      );
+
+      if (enabledGroups.length <= 1) {
+        logger.info("✅ No multiple ENABLED groups found. State is correct.");
+        return { fixed: false, message: "No issues found" };
+      }
+
+      logger.info(`Found ${enabledGroups.length} ENABLED groups. Fixing...`);
+
+      // Keep the most recently updated one enabled, disable the rest
+      enabledGroups.sort((a, b) => {
+        const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return bTime - aTime; // Most recent first
+      });
+
+      const keepEnabled = enabledGroups[0];
+      const toDisable = enabledGroups.slice(1);
+
+      logger.info(`Keeping ENABLED: ${keepEnabled.actionGroupName}`);
+      logger.info(`Disabling ${toDisable.length} other groups...`);
+
+      // Disable all except the most recent one
+      for (const ag of toDisable) {
+        try {
+          logger.info(`Disabling: ${ag.actionGroupName} (${ag.actionGroupId})`);
+          await this.updateActionGroup(ag.actionGroupId, {
+            actionGroupState: "DISABLED",
+          });
+          logger.info(`✅ Disabled: ${ag.actionGroupName}`);
+        } catch (error) {
+          logger.error(
+            `❌ Failed to disable ${ag.actionGroupName}: ${error.message}`
+          );
+        }
+      }
+
+      logger.info("🎉 Fixed multiple ENABLED action groups!");
+      return {
+        fixed: true,
+        keptEnabled: keepEnabled.actionGroupName,
+        disabled: toDisable.map((ag) => ag.actionGroupName),
+      };
+    } catch (error) {
+      logger.error("Error fixing multiple ENABLED groups:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Get action group details
    * @param {string} actionGroupId - Action group ID
    * @returns {Object} Action group details
@@ -1154,6 +1214,207 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
   }
 
   /**
+   * Resolve an incoming identifier to a concrete action group summary.
+   * Accepts either actionGroupId or actionGroupName and returns a summary if found.
+   * @param {string} identifier
+   * @returns {Promise<object|null>}
+   */
+  async resolveActionGroup(identifier) {
+    if (!identifier) return null;
+
+    const normalizedId = String(identifier).trim();
+
+    try {
+      // Try direct by ID first
+      const byId = await this.getActionGroup(normalizedId);
+      if (byId) {
+        logger.info(`Found action group by direct ID: ${normalizedId}`);
+        return byId;
+      }
+    } catch (error) {
+      logger.debug(
+        `Direct ID lookup failed for ${normalizedId}: ${error.message}`
+      );
+    }
+
+    try {
+      const { actionGroups } = await this.listActionGroups();
+
+      // Exact ID match from list
+      let found = actionGroups.find(
+        (ag) => String(ag.actionGroupId).trim() === normalizedId
+      );
+      if (found) {
+        logger.info(`Found action group by ID from list: ${normalizedId}`);
+        return found;
+      }
+
+      // Exact name match
+      found = actionGroups.find((ag) => ag.actionGroupName === normalizedId);
+      if (found) {
+        logger.info(`Found action group by exact name: ${normalizedId}`);
+        return found;
+      }
+
+      // Case-insensitive name match
+      found = actionGroups.find(
+        (ag) => ag.actionGroupName?.toLowerCase() === normalizedId.toLowerCase()
+      );
+      if (found) {
+        logger.info(
+          `Found action group by case-insensitive name: ${normalizedId}`
+        );
+        return found;
+      }
+
+      // Partial contains match
+      found = actionGroups.find((ag) =>
+        ag.actionGroupName?.toLowerCase().includes(normalizedId.toLowerCase())
+      );
+      if (found) {
+        logger.info(`Found action group by partial name: ${normalizedId}`);
+        return found;
+      }
+
+      logger.warn(`No action group found for identifier: ${normalizedId}`);
+      return null;
+    } catch (e) {
+      logger.error("Failed to resolve action group identifier:", e.message);
+      return null;
+    }
+  }
+
+  /**
+   * Reconstruct actionGroupExecutor if missing
+   * @param {string} actionGroupId
+   * @param {Object} actionGroup - Current action group details (may be partial)
+   * @returns {Promise<Object|null>} executor object or null
+   */
+  async reconstructExecutor(actionGroupId, actionGroup) {
+    try {
+      // If executor exists, return as-is
+      if (actionGroup && actionGroup.actionGroupExecutor) {
+        return actionGroup.actionGroupExecutor;
+      }
+
+      // Try from in-memory stored config
+      const stored = this.actionGroups.get(actionGroupId);
+      let apiName = stored?.apiConfig?.apiName;
+
+      // Try to parse OpenAPI payload for title if present
+      if (!apiName && actionGroup?.apiSchema?.payload) {
+        try {
+          const openApi = JSON.parse(actionGroup.apiSchema.payload);
+          apiName = openApi?.info?.title;
+        } catch (_) {}
+      }
+
+      // Last resort: derive from actionGroupName (strip _ActionGroup suffix)
+      if (!apiName) {
+        const rawName = actionGroup?.actionGroupName;
+        if (rawName) {
+          apiName = rawName.replace(/_ActionGroup$/i, "");
+          logger.info(
+            `Derived apiName '${apiName}' from actionGroupName '${rawName}'`
+          );
+        }
+      }
+
+      if (!apiName) return null;
+
+      // Derive Lambda function name and fetch ARN
+      const functionName = this.generateLambdaFunctionName(apiName);
+      try {
+        const { GetFunctionCommand } = require("@aws-sdk/client-lambda");
+        const res = await this.lambdaClient.send(
+          new GetFunctionCommand({ FunctionName: functionName })
+        );
+        if (res?.Configuration?.FunctionArn) {
+          return { lambda: res.Configuration.FunctionArn };
+        }
+      } catch (e) {
+        // Swallow and return null so caller can decide a fallback
+        logger.warn(
+          `Could not resolve Lambda ARN for ${functionName}: ${e.message}`
+        );
+      }
+      return null;
+    } catch (error) {
+      logger.warn("Failed to reconstruct executor:", error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Reconstruct apiSchema if missing
+   * @param {string} actionGroupId
+   * @param {Object} actionGroup - Current action group details (may be partial)
+   * @returns {Promise<Object|null>} apiSchema object or null
+   */
+  async reconstructApiSchema(actionGroupId, actionGroup) {
+    try {
+      if (actionGroup?.apiSchema?.payload) {
+        return actionGroup.apiSchema;
+      }
+
+      // Try from stored config by regenerating OpenAPI
+      const stored = this.actionGroups.get(actionGroupId);
+      if (stored?.apiConfig) {
+        try {
+          const schema = await openApiGeneratorService.generateSchema(
+            stored.apiConfig
+          );
+          return { payload: JSON.stringify(schema) };
+        } catch (e) {
+          logger.warn(
+            "Could not regenerate OpenAPI from stored config:",
+            e.message
+          );
+        }
+      }
+
+      // Minimal fallback schema to satisfy AWS validation during DISABLE
+      const title =
+        actionGroup?.actionGroupName ||
+        stored?.apiConfig?.apiName ||
+        "Legacy API";
+      const minimal = {
+        openapi: "3.0.0",
+        info: {
+          title,
+          version: "1.0.0",
+          description: "Auto-generated minimal schema for state update",
+        },
+        paths: {
+          "/health": {
+            get: {
+              operationId: "health",
+              summary: "Health endpoint",
+              responses: {
+                200: {
+                  description: "OK",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: { ok: { type: "boolean" } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+      return { payload: JSON.stringify(minimal) };
+    } catch (error) {
+      logger.warn("Failed to reconstruct apiSchema:", error.message);
+      return null;
+    }
+  }
+
+  /**
    * Generate example data from JSON schema
    * @param {Object} schema - JSON schema
    * @returns {*} Example data
@@ -1196,190 +1457,407 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
   }
 
   /**
-   * Update action group
-   * @param {string} actionGroupId - Action group ID
-   * @param {Object} updates - Updates to apply
-   * @returns {Object} Updated action group
+   * Update action group - always include required fields for AWS Bedrock.
+   * Only the following fields are required for enable/disable:
+   *   - actionGroupName
+   *   - description
+   *   - actionGroupExecutor
+   *   - apiSchema or functionSchema
+   *   - actionGroupState (ENABLED or DISABLED)
+   * Other fields (parentActionGroupSignature, parentActionGroupSignatureParams) are not required and are not sent unless present in the current action group.
    */
   async updateActionGroup(actionGroupId, updates) {
     try {
-      // AWS Bedrock has complex requirements for UpdateAgentActionGroup
-      // For simple state changes, we'll simulate the update by just preparing the agent
-      // since the actual state management might be handled internally by AWS
+      logger.info(
+        `Updating action group ${actionGroupId} with:`,
+        JSON.stringify(updates, null, 2)
+      );
 
-      logger.info(`Updating action group ${actionGroupId} with:`, updates);
+      // Resolve the action group
+      const resolved = await this.resolveActionGroup(actionGroupId);
+      if (!resolved) {
+        throw new Error("Action group not found during resolution");
+      }
 
-      // For state-only changes, we can try a more minimal approach
-      if (updates.actionGroupState && Object.keys(updates).length === 1) {
-        logger.info(
-          `Simple state change to ${updates.actionGroupState} for action group ${actionGroupId}`
-        );
+      const realActionGroupId = String(resolved.actionGroupId).trim();
+      logger.info(`Using resolved action group ID: ${realActionGroupId}`);
 
-        // Get current action group from list (which works)
-        const listResult = await this.listActionGroups();
-        const currentActionGroup = listResult.actionGroups.find(
-          (ag) => ag.actionGroupId === actionGroupId
-        );
-
-        if (!currentActionGroup) {
-          throw new Error("Action group not found");
-        }
-
-        // Attempt a minimal update with just state change
-        try {
-          const command = new UpdateAgentActionGroupCommand({
+      // Get current action group details - try detailed first, then fallback
+      let currentActionGroup = null;
+      try {
+        logger.info("Attempting GetAgentActionGroup call...");
+        const detailed = await this.bedrockAgentClient.send(
+          new GetAgentActionGroupCommand({
             agentId: this.agentId,
             agentVersion: "DRAFT",
-            actionGroupId: actionGroupId,
-            actionGroupName: currentActionGroup.actionGroupName,
-            actionGroupState: updates.actionGroupState,
-            description:
-              currentActionGroup.description ||
-              `Auto-generated action group for ${currentActionGroup.actionGroupName}`,
-          });
-
-          const response = await this.bedrockAgentClient.send(command);
-
-          // Prepare agent after update
-          await this.prepareAgent();
-
-          return response.actionGroup;
-        } catch (updateError) {
-          logger.warn(
-            "Direct state update failed, simulating success:",
-            updateError.message
-          );
-
-          // For some action groups, the update API might not work
-          // But the state change might still be effective after agent preparation
-          await this.prepareAgent();
-
-          // Return the action group with the updated state
-          return {
-            ...currentActionGroup,
-            actionGroupState: updates.actionGroupState,
-          };
-        }
+            actionGroupId: realActionGroupId,
+          })
+        );
+        currentActionGroup = detailed?.actionGroup;
+        logger.info("✅ GetAgentActionGroup successful");
+      } catch (e) {
+        logger.warn(`GetAgentActionGroup failed: ${e.message}`);
+        logger.info("Falling back to list-based approach...");
+        currentActionGroup = await this.getActionGroup(realActionGroupId);
       }
 
-      // For complex updates, get full details first (if available)
-      const currentActionGroup = await this.getActionGroup(actionGroupId);
       if (!currentActionGroup) {
-        throw new Error("Action group not found");
+        throw new Error("Action group not found in detailed lookup");
       }
 
-      // Build the update command with all required fields
-      const updateData = {
+      logger.info("Current action group details:", {
+        id: currentActionGroup.actionGroupId,
+        name: currentActionGroup.actionGroupName,
+        state: currentActionGroup.actionGroupState,
+        hasExecutor: !!currentActionGroup.actionGroupExecutor,
+        hasApiSchema: !!currentActionGroup.apiSchema,
+        hasFunctionSchema: !!currentActionGroup.functionSchema,
+      });
+
+      // Build update command with ALL required fields
+      const updateParams = {
         agentId: this.agentId,
         agentVersion: "DRAFT",
-        actionGroupId: actionGroupId,
+        actionGroupId: realActionGroupId,
         actionGroupName: currentActionGroup.actionGroupName,
         description:
           currentActionGroup.description ||
           `Auto-generated action group for ${currentActionGroup.actionGroupName}`,
-        ...updates,
+        ...updates, // Only actionGroupState is typically updated for enable/disable
       };
 
-      // Include existing schema if available
-      if (
-        currentActionGroup.apiSchema &&
-        !updates.apiSchema &&
-        !updates.functionSchema
-      ) {
-        updateData.apiSchema = currentActionGroup.apiSchema;
+      // CRITICAL: Ensure executor is present
+      if (currentActionGroup.actionGroupExecutor) {
+        updateParams.actionGroupExecutor =
+          currentActionGroup.actionGroupExecutor;
+        logger.info("✅ Using existing executor");
+      } else {
+        logger.warn("❌ No executor found, attempting reconstruction...");
+        const reconstructedExecutor = await this.reconstructExecutor(
+          realActionGroupId,
+          currentActionGroup
+        );
+        if (reconstructedExecutor) {
+          updateParams.actionGroupExecutor = reconstructedExecutor;
+          logger.info("✅ Reconstructed executor successfully");
+        } else {
+          // Try to copy from another action group
+          try {
+            const allGroups = await this.listActionGroups();
+            const donor = allGroups.actionGroups.find(
+              (ag) =>
+                ag.actionGroupExecutor && ag.actionGroupId !== realActionGroupId
+            );
+            if (donor) {
+              updateParams.actionGroupExecutor = donor.actionGroupExecutor;
+              logger.info(`✅ Copied executor from: ${donor.actionGroupName}`);
+            }
+          } catch (e) {
+            logger.warn(
+              "Failed to copy executor from other groups:",
+              e.message
+            );
+          }
+        }
       }
 
-      // Include existing action group executor if available
-      if (
-        currentActionGroup.actionGroupExecutor &&
-        !updates.actionGroupExecutor
-      ) {
-        updateData.actionGroupExecutor = currentActionGroup.actionGroupExecutor;
+      // CRITICAL: Ensure schema is present (either apiSchema or functionSchema)
+      if (currentActionGroup.apiSchema) {
+        updateParams.apiSchema = currentActionGroup.apiSchema;
+        logger.info("✅ Using existing apiSchema");
+      } else if (currentActionGroup.functionSchema) {
+        updateParams.functionSchema = currentActionGroup.functionSchema;
+        logger.info("✅ Using existing functionSchema");
+      } else {
+        logger.warn("❌ No schema found, attempting reconstruction...");
+        const rebuiltSchema = await this.reconstructApiSchema(
+          realActionGroupId,
+          currentActionGroup
+        );
+        if (rebuiltSchema) {
+          updateParams.apiSchema = rebuiltSchema;
+          logger.info("✅ Reconstructed apiSchema successfully");
+        }
       }
 
-      const command = new UpdateAgentActionGroupCommand(updateData);
-      const response = await this.bedrockAgentClient.send(command);
+      // Only include parentActionGroupSignature/Params if present in currentActionGroup
+      if (currentActionGroup.parentActionGroupSignature) {
+        updateParams.parentActionGroupSignature =
+          currentActionGroup.parentActionGroupSignature;
+      }
+      if (currentActionGroup.parentActionGroupSignatureParams) {
+        updateParams.parentActionGroupSignatureParams =
+          currentActionGroup.parentActionGroupSignatureParams;
+      }
 
-      // Prepare agent after update
+      // Final validation - ensure critical fields are present
+      if (!updateParams.actionGroupExecutor) {
+        throw new Error(
+          "Cannot update action group: missing actionGroupExecutor (Lambda ARN)"
+        );
+      }
+
+      if (!updateParams.apiSchema && !updateParams.functionSchema) {
+        throw new Error(
+          "Cannot update action group: missing both apiSchema and functionSchema"
+        );
+      }
+
+      // Log the payload (without sensitive data)
+      const logPayload = { ...updateParams };
+      if (logPayload.apiSchema?.payload) {
+        logPayload.apiSchema = {
+          payloadSize:
+            Buffer.byteLength(logPayload.apiSchema.payload, "utf8") + " bytes",
+        };
+      }
+
+      logger.info(
+        "Final UpdateAgentActionGroup payload:",
+        JSON.stringify(logPayload, null, 2)
+      );
+
+      // Send the update command
+      logger.info("🚀 Sending UpdateAgentActionGroup command...");
+      const updateCommand = new UpdateAgentActionGroupCommand(updateParams);
+      const response = await this.bedrockAgentClient.send(updateCommand);
+
+      logger.info("✅ UpdateAgentActionGroup command successful!");
+
+      // Prepare agent
+      logger.info("🔄 Preparing agent...");
       await this.prepareAgent();
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      logger.info("✅ Agent prepared successfully");
 
       return response.actionGroup;
     } catch (error) {
-      logger.error("Error updating action group:", error);
-      throw new Error(`Failed to update action group: ${error.message}`);
+      logger.error("❌ UpdateAgentActionGroup failed:", {
+        actionGroupId,
+        updates,
+        errorMessage: error.message,
+        errorName: error.name,
+        errorCode: error.$metadata?.httpStatusCode,
+        requestId: error.$metadata?.requestId,
+      });
+
+      // Enhanced error message
+      let enhancedMessage = `Failed to update action group: ${error.message}`;
+      if (error.message.includes("not found")) {
+        enhancedMessage +=
+          ". The action group may have been deleted by another process or may be in an inconsistent state.";
+      }
+
+      throw new Error(enhancedMessage);
+    }
+  }
+  /**
+   * Enable action group
+   * Only updates actionGroupState to ENABLED, keeping all other required fields.
+   * @param {string} actionGroupId - Action group ID to enable
+   * @returns {Object} Updated action group
+   */
+  async enableActionGroup(actionGroupId) {
+    try {
+      logger.info(
+        `🟢 Enabling action group: ${actionGroupId} and disabling others`
+      );
+
+      // Normalize the ID for comparison
+      const normalizedId = String(actionGroupId).trim();
+
+      // Resolve the action group first
+      const resolved = await this.resolveActionGroup(normalizedId);
+      if (!resolved) {
+        throw new Error("Action group not found");
+      }
+
+      const realActionGroupId = String(resolved.actionGroupId).trim();
+      logger.info(`Resolved action group ID: ${realActionGroupId}`);
+
+      // List all action groups
+      const allGroups = await this.listActionGroups();
+
+      // Disable all enabled action groups except the one to enable
+      for (const ag of allGroups.actionGroups) {
+        if (
+          String(ag.actionGroupId).trim() !== realActionGroupId &&
+          ag.actionGroupState === "ENABLED"
+        ) {
+          try {
+            logger.info(`Disabling action group: ${ag.actionGroupId}`);
+            await this.updateActionGroup(ag.actionGroupId, {
+              actionGroupState: "DISABLED",
+            });
+          } catch (e) {
+            logger.warn(
+              `Failed to disable action group ${ag.actionGroupId}: ${e.message}`
+            );
+          }
+        }
+      }
+
+      // Enable the selected action group
+      const result = await this.updateActionGroup(realActionGroupId, {
+        actionGroupState: "ENABLED",
+      });
+
+      logger.info(`✅ Action group enabled successfully: ${realActionGroupId}`);
+      return result;
+    } catch (error) {
+      logger.error(
+        `❌ Failed to enable action group ${actionGroupId}: ${error.message}`
+      );
+      throw new Error(`Failed to enable action group: ${error.message}`);
     }
   }
 
   /**
-   * Delete action group
+   * Disable action group
+   * Only updates actionGroupState to DISABLED, keeping all other required fields.
+   * @param {string} actionGroupId - Action group ID
+   * @returns {Object} Updated action group
+   */
+  async disableActionGroup(actionGroupId) {
+    try {
+      logger.info(`🔴 Disabling action group: ${actionGroupId}`);
+
+      // Normalize the ID for comparison
+      const normalizedId = String(actionGroupId).trim();
+
+      // Resolve the action group first
+      const resolved = await this.resolveActionGroup(normalizedId);
+      if (!resolved) {
+        throw new Error("Action group not found");
+      }
+
+      const realActionGroupId = String(resolved.actionGroupId).trim();
+      logger.info(`Resolved action group ID: ${realActionGroupId}`);
+
+      const result = await this.updateActionGroup(realActionGroupId, {
+        actionGroupState: "DISABLED",
+      });
+
+      logger.info(
+        `✅ Action group disabled successfully: ${realActionGroupId}`
+      );
+      return result;
+    } catch (error) {
+      logger.error(
+        `❌ Failed to disable action group ${actionGroupId}: ${error.message}`
+      );
+      throw new Error(`Failed to disable action group: ${error.message}`);
+    }
+  }
+  /**
+   * Delete action group in AWS Bedrock and locally
    * @param {string} actionGroupId - Action group ID
    */
   async deleteActionGroup(actionGroupId) {
     try {
-      // First, disable the action group if it's enabled
-      logger.info(`Preparing to delete action group: ${actionGroupId}`);
+      logger.info(`🗑️ Starting deletion for: ${actionGroupId}`);
 
-      // Get current action group status
-      const actionGroup = await this.getActionGroup(actionGroupId);
-      if (actionGroup && actionGroup.actionGroupState === "ENABLED") {
+      // Step 1: Resolve and check existence
+      const resolved = await this.resolveActionGroup(actionGroupId);
+      if (!resolved) {
         logger.info(
-          `Action group is enabled, disabling first: ${actionGroupId}`
+          "✅ Action group not found - already deleted or doesn't exist"
         );
+        this.actionGroups.delete(actionGroupId);
+        this.executionHistory.delete(actionGroupId);
+        return { deleted: true, reason: "not_found" };
+      }
 
-        // Disable the action group first
-        await this.updateActionGroup(actionGroupId, {
-          actionGroupState: "DISABLED",
-        });
+      const realActionGroupId = String(resolved.actionGroupId).trim();
+      logger.info(`Resolved action group ID: ${realActionGroupId}`);
 
-        // Wait longer for the state change to propagate in AWS
-        logger.info("Waiting for state change to propagate...");
-        await new Promise((resolve) => setTimeout(resolve, 5000)); // Increased to 5 seconds
+      // Step 2: Get full action group details
+      const actionGroup = await this.getActionGroup(realActionGroupId);
+      if (!actionGroup) {
+        logger.info(
+          "✅ Action group details not found - considering as deleted"
+        );
+        this.actionGroups.delete(actionGroupId);
+        this.actionGroups.delete(realActionGroupId);
+        this.executionHistory.delete(actionGroupId);
+        this.executionHistory.delete(realActionGroupId);
+        return { deleted: true, reason: "details_not_found" };
+      }
 
-        // Verify the state change took effect
-        const updatedActionGroup = await this.getActionGroup(actionGroupId);
-        if (
-          updatedActionGroup &&
-          updatedActionGroup.actionGroupState === "ENABLED"
-        ) {
+      // Step 3: If enabled, disable first
+      if (actionGroup.actionGroupState === "ENABLED") {
+        logger.info("🔄 Action group is ENABLED - disabling before delete...");
+        try {
+          await this.disableActionGroup(realActionGroupId);
+          // Wait for state to propagate
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          logger.info("✅ Action group disabled successfully");
+        } catch (disableError) {
           logger.warn(
-            "Action group is still enabled after disable attempt, waiting longer..."
+            `Failed to disable before delete: ${disableError.message}`
           );
-          await new Promise((resolve) => setTimeout(resolve, 5000)); // Additional wait
+          // Continue with deletion anyway
         }
       }
 
-      const command = new DeleteAgentActionGroupCommand({
-        agentId: this.agentId,
-        agentVersion: "DRAFT",
-        actionGroupId: actionGroupId,
-      });
+      // Step 4: Delete from AWS Bedrock
+      logger.info("🔥 Deleting from AWS Bedrock...");
+      try {
+        const deleteCommand = new DeleteAgentActionGroupCommand({
+          agentId: this.agentId,
+          agentVersion: "DRAFT",
+          actionGroupId: realActionGroupId,
+        });
 
-      await this.bedrockAgentClient.send(command);
-
-      // Clean up stored configuration
-      this.actionGroups.delete(actionGroupId);
-
-      // Prepare agent after deletion
-      await this.prepareAgent();
-
-      logger.info(`Action group deleted successfully: ${actionGroupId}`);
-    } catch (error) {
-      logger.error("Error deleting action group:", error);
-
-      // Provide more helpful error messages
-      if (
-        error.message.includes("ENABLED") ||
-        error.message.includes("enabled")
-      ) {
-        throw new Error(
-          `Cannot delete action group while it's enabled. Please disable it first and try again.`
-        );
+        await this.bedrockAgentClient.send(deleteCommand);
+        logger.info("✅ Successfully deleted from AWS Bedrock");
+      } catch (awsError) {
+        if (awsError.name === "ResourceNotFoundException") {
+          logger.info(
+            "✅ Action group not found in AWS - considering as already deleted"
+          );
+        } else {
+          logger.error(`AWS deletion failed: ${awsError.message}`);
+          throw new Error(
+            `Failed to delete from AWS Bedrock: ${awsError.message}`
+          );
+        }
       }
+
+      // Step 5: Local cleanup
+      this.actionGroups.delete(actionGroupId);
+      this.actionGroups.delete(realActionGroupId);
+      this.executionHistory.delete(actionGroupId);
+      this.executionHistory.delete(realActionGroupId);
+
+      // Step 6: Prepare agent to sync changes
+      try {
+        await this.prepareAgent();
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        logger.info("✅ Agent prepared successfully after deletion");
+      } catch (prepareError) {
+        logger.warn(
+          `Failed to prepare agent after deletion: ${prepareError.message}`
+        );
+        // Don't fail the deletion for this
+      }
+
+      logger.info("🎉 Action group deletion completed successfully!");
+      return {
+        deleted: true,
+        actionGroupId: realActionGroupId,
+        deletedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      logger.error(`❌ Action group deletion failed: ${error.message}`);
+
+      // Clean up local state even if AWS deletion failed
+      this.actionGroups.delete(actionGroupId);
+      this.executionHistory.delete(actionGroupId);
 
       throw new Error(`Failed to delete action group: ${error.message}`);
     }
   }
-
   /**
    * Test action group functionality
    * @param {string} actionGroupId - Action group ID

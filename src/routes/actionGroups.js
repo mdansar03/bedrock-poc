@@ -1470,7 +1470,8 @@ router.put(
     param("actionGroupId")
       .notEmpty()
       .withMessage("Action group ID is required"),
-    body("actionGroupState").optional().isIn(["ENABLED", "DISABLED"]),
+    // Remove actionGroupState validation since we have dedicated enable/disable routes
+    body("description").optional().isString(),
   ],
   async (req, res) => {
     try {
@@ -1485,6 +1486,14 @@ router.put(
 
       const { actionGroupId } = req.params;
       const updates = req.body;
+
+      // Remove actionGroupState from updates - use dedicated enable/disable endpoints
+      if (updates.actionGroupState) {
+        delete updates.actionGroupState;
+        logger.warn(
+          "actionGroupState removed from update - use /enabled or /disabled endpoints"
+        );
+      }
 
       const result = await actionGroupService.updateActionGroup(
         actionGroupId,
@@ -1502,6 +1511,154 @@ router.put(
         success: false,
         error: "Failed to update action group",
         message: error.message,
+      });
+    }
+  }
+);
+/**
+ * @swagger
+ * /api/action-groups/{actionGroupId}/enabled:
+ *   post:
+ *     summary: Enable action group
+ *     description: Enable a specific action group
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: path
+ *         name: actionGroupId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Action group ID
+ *     responses:
+ *       200:
+ *         description: Action group enabled successfully
+ *       404:
+ *         description: Action group not found
+ */
+router.post(
+  "/:actionGroupId/enabled",
+  [
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
+  ],
+  async (req, res) => {
+    // Only the required fields for enable/disable are sent (see service for details)
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: "Validation failed",
+          details: errors.array(),
+        });
+      }
+
+      const { actionGroupId } = req.params;
+      logger.info(`🟢 ENABLE request for action group: ${actionGroupId}`);
+
+      const result = await actionGroupService.enableActionGroup(actionGroupId);
+
+      res.json({
+        success: true,
+        message: "Action group enabled successfully (others disabled)",
+        data: result,
+      });
+    } catch (error) {
+      logger.error(`Error enabling action group ${req.params.actionGroupId}:`, {
+        message: error.message,
+        stack: error.stack,
+      });
+
+      let statusCode = 500;
+      let errorMessage = "Failed to enable action group";
+
+      if (error.message.includes("not found")) {
+        statusCode = 404;
+        errorMessage = "Action group not found";
+      }
+
+      res.status(statusCode).json({
+        success: false,
+        error: errorMessage,
+        message: error.message,
+        actionGroupId: req.params.actionGroupId,
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/action-groups/{actionGroupId}/disable:
+ *   post:
+ *     summary: Disable action group
+ *     description: Disable a specific action group
+ *     tags: [Action Groups]
+ *     parameters:
+ *       - in: path
+ *         name: actionGroupId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Action group ID
+ *     responses:
+ *       200:
+ *         description: Action group disabled successfully
+ *       404:
+ *         description: Action group not found
+ */
+router.post(
+  "/:actionGroupId/disabled",
+  [
+    param("actionGroupId")
+      .notEmpty()
+      .withMessage("Action group ID is required"),
+  ],
+  async (req, res) => {
+    // Only the required fields for enable/disable are sent (see service for details)
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: "Validation failed",
+          details: errors.array(),
+        });
+      }
+
+      const { actionGroupId } = req.params;
+      logger.info(`🔴 DISABLE request for action group: ${actionGroupId}`);
+
+      const result = await actionGroupService.disableActionGroup(actionGroupId);
+
+      res.json({
+        success: true,
+        message: "Action group disabled successfully",
+        data: result,
+      });
+    } catch (error) {
+      logger.error(
+        `Error disabling action group ${req.params.actionGroupId}:`,
+        {
+          message: error.message,
+          stack: error.stack,
+        }
+      );
+
+      let statusCode = 500;
+      let errorMessage = "Failed to disable action group";
+
+      if (error.message.includes("not found")) {
+        statusCode = 404;
+        errorMessage = "Action group not found";
+      }
+
+      res.status(statusCode).json({
+        success: false,
+        error: errorMessage,
+        message: error.message,
+        actionGroupId: req.params.actionGroupId,
       });
     }
   }
@@ -1527,6 +1684,7 @@ router.put(
  *       404:
  *         description: Action group not found
  */
+// actiongroup.js
 router.delete(
   "/:actionGroupId",
   [
@@ -1536,8 +1694,13 @@ router.delete(
   ],
   async (req, res) => {
     try {
+      logger.info(
+        `🗑️ DELETE request for action group: ${req.params.actionGroupId}`
+      );
+
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
+        logger.error("Validation errors:", errors.array());
         return res.status(400).json({
           success: false,
           error: "Validation failed",
@@ -1546,18 +1709,60 @@ router.delete(
       }
 
       const { actionGroupId } = req.params;
-      await actionGroupService.deleteActionGroup(actionGroupId);
+
+      if (!actionGroupId || actionGroupId.trim() === "") {
+        logger.error("Empty action group ID provided");
+        return res.status(400).json({
+          success: false,
+          error: "Invalid action group ID provided",
+        });
+      }
+
+      logger.info(`Starting deletion of action group: ${actionGroupId}`);
+
+      const result = await actionGroupService.deleteActionGroup(actionGroupId);
+
+      logger.info(`Successfully deleted action group: ${actionGroupId}`);
 
       res.json({
         success: true,
         message: "Action group deleted successfully",
+        data: {
+          actionGroupId: result.actionGroupId || actionGroupId,
+          deleted: result.deleted,
+          deletedAt: result.deletedAt || new Date().toISOString(),
+          reason: result.reason,
+        },
       });
     } catch (error) {
-      logger.error("Error deleting action group:", error);
-      res.status(500).json({
+      logger.error(
+        `Error in DELETE route for action group ${req.params.actionGroupId}:`,
+        {
+          error: error.message,
+          stack: error.stack,
+          params: req.params,
+        }
+      );
+
+      let statusCode = 500;
+      let errorMessage = "Failed to delete action group";
+
+      if (
+        error.message.includes("not found") ||
+        error.message.includes("ResourceNotFoundException")
+      ) {
+        statusCode = 404;
+        errorMessage = "Action group not found";
+      }
+
+      res.status(statusCode).json({
         success: false,
-        error: "Failed to delete action group",
+        error: errorMessage,
         message: error.message,
+        details: {
+          actionGroupId: req.params.actionGroupId,
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   }
@@ -2640,6 +2845,16 @@ router.get("/aliases/latest", async (req, res) => {
       message: error.message,
     });
   }
+});
+
+// Catch-all error handler for async errors
+router.use((err, req, res, next) => {
+  logger.error("Unhandled error in actionGroups route:", err);
+  res.status(500).json({
+    success: false,
+    error: "Internal server error",
+    message: err && err.message ? err.message : "Unknown error",
+  });
 });
 
 module.exports = router;
