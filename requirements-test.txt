@@ -1,0 +1,4 @@
+# Dependencies for AWS Bedrock Agent Streaming Test
+boto3>=1.34.0
+botocore>=1.34.0
+python-dotenv>=1.0.0

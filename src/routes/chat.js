@@ -797,59 +797,7 @@ router.get("/status", (req, res) => {
   }
 });
 
-/**
- * Bedrock Agent invocation (if you have a separate endpoint for agent)
- * POST /api/chat/agent
- */
-router.post("/agent", async (req, res) => {
-  try {
-    // Validate request body
-    const {
-      message,
-      sessionId,
-      options = {},
-      dataSources,
-      agentAliasId,
-    } = req.body;
-    if (
-      !message ||
-      typeof message !== "string" ||
-      message.length < 1 ||
-      message.length > 2000
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid message",
-        message: "Message must be a string between 1 and 2000 characters",
-      });
-    }
-
-    // Pass agentAliasId to the service if provided
-    const invokeOptions = { ...options };
-    if (agentAliasId) {
-      invokeOptions.agentAliasId = agentAliasId;
-    }
-
-    // Invoke the agent
-    const response = await bedrockAgentService.invokeAgent(
-      message,
-      sessionId,
-      invokeOptions,
-      dataSources
-    );
-
-    res.json({
-      success: true,
-      data: response,
-    });
-  } catch (error) {
-    logger.error("Agent invocation error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to invoke agent",
-      message: error.message,
-    });
-  }
-});
+// Agent endpoint moved to /api/chat/agent routes (agent.js)
+// This eliminates confusion between /api/chat/agent and /api/chat/agent/ endpoints
 
 module.exports = router;

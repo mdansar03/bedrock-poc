@@ -6,6 +6,7 @@ import KnowledgePage from './pages/KnowledgePage'
 import ActionGroupPage from './pages/ActionGroupPage'
 import DataViewerPage from './pages/DataViewerPage'
 import ChatPage from './pages/ChatPage'
+import StreamingChatPage from './pages/StreamingChatPage'
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
             <Route path="/action-groups" element={<ActionGroupPage />} />
             <Route path="/data" element={<DataViewerPage />} />
             <Route path="/chat" element={<ChatPage />} />
+            <Route path="/streaming-chat" element={<StreamingChatPage />} />
           </Routes>
         </main>
       </div>

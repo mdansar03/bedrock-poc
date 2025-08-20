@@ -25,3 +25,174 @@
     @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6;
   }
 }
+
+@layer utilities {
+  /* HTML Content Styling for AI Responses */
+  .html-content {
+    @apply w-full;
+  }
+  
+  .html-content-body {
+    @apply leading-relaxed;
+  }
+  
+  /* Bedrock Response Container */
+  .bedrock-response {
+    @apply space-y-3;
+  }
+  
+  /* Typography Styles */
+  .response-heading, 
+  .response-h1, .response-h2, .response-h3, 
+  .response-h4, .response-h5, .response-h6 {
+    @apply font-semibold text-gray-900 mt-4 mb-2 leading-tight;
+  }
+  
+  .response-h1 { @apply text-2xl; }
+  .response-h2 { @apply text-xl; }
+  .response-h3 { @apply text-lg; }
+  .response-h4 { @apply text-base font-medium; }
+  .response-h5 { @apply text-sm font-medium; }
+  .response-h6 { @apply text-xs font-medium uppercase tracking-wide; }
+  
+  .response-paragraph {
+    @apply mb-3 leading-relaxed text-gray-800;
+  }
+  
+  .response-paragraph:last-child {
+    @apply mb-0;
+  }
+  
+  /* Text Formatting */
+  .response-strong {
+    @apply font-semibold text-gray-900;
+  }
+  
+  .response-emphasis {
+    @apply italic;
+  }
+  
+  /* Lists */
+  .response-unordered-list, .response-ordered-list {
+    @apply mb-3 pl-6 space-y-1;
+  }
+  
+  .response-unordered-list {
+    @apply list-disc;
+  }
+  
+  .response-ordered-list {
+    @apply list-decimal;
+  }
+  
+  .response-list-item {
+    @apply leading-relaxed text-gray-800;
+  }
+  
+  /* Code Styling */
+  .response-inline-code {
+    @apply bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-sm font-mono;
+  }
+  
+  .response-code-block {
+    @apply bg-gray-100 border border-gray-200 rounded-lg p-4 mb-3 overflow-x-auto;
+  }
+  
+  .response-code {
+    @apply text-sm font-mono text-gray-800 leading-relaxed;
+  }
+  
+  /* Blockquotes */
+  .response-blockquote {
+    @apply border-l-4 border-blue-200 bg-blue-50 pl-4 py-2 mb-3 italic text-gray-700;
+  }
+  
+  /* Tables */
+  .response-table {
+    @apply w-full border-collapse border border-gray-300 mb-3 text-sm;
+  }
+  
+  .response-table-header {
+    @apply bg-gray-100;
+  }
+  
+  .response-table th,
+  .response-table td {
+    @apply border border-gray-300 px-3 py-2 text-left;
+  }
+  
+  .response-table th {
+    @apply font-semibold text-gray-900;
+  }
+  
+  .response-table td {
+    @apply text-gray-800;
+  }
+  
+  /* Links */
+  .response-link {
+    @apply text-blue-600 hover:text-blue-800 underline;
+  }
+  
+  /* Horizontal Rules */
+  .response-hr {
+    @apply border-0 border-t border-gray-300 my-4;
+  }
+  
+  /* Error Styling */
+  .response-error {
+    @apply bg-red-50 border border-red-200 text-red-800 p-3 rounded-lg mb-3;
+  }
+  
+  .response-fallback {
+    @apply bg-gray-100 border border-gray-200 text-gray-800 p-3 rounded text-sm font-mono whitespace-pre-wrap mt-2;
+  }
+  
+  /* Enhanced Content Styling */
+  .enhanced-html-content {
+    @apply w-full;
+  }
+  
+  .format-info {
+    @apply text-xs;
+  }
+  
+  /* Dark mode support for HTML content */
+  @media (prefers-color-scheme: dark) {
+    .response-paragraph,
+    .response-list-item,
+    .response-table td {
+      @apply text-gray-200;
+    }
+    
+    .response-heading,
+    .response-h1, .response-h2, .response-h3,
+    .response-h4, .response-h5, .response-h6,
+    .response-strong,
+    .response-table th {
+      @apply text-gray-100;
+    }
+    
+    .response-inline-code,
+    .response-code-block {
+      @apply bg-gray-800 text-gray-200 border-gray-600;
+    }
+    
+    .response-blockquote {
+      @apply border-blue-500 bg-blue-900/20 text-gray-300;
+    }
+    
+    .response-table {
+      @apply border-gray-600;
+    }
+    
+    .response-table th,
+    .response-table td {
+      @apply border-gray-600;
+    }
+    
+    .response-table-header {
+      @apply bg-gray-800;
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, Database, MessageCircle, FolderOpen, Settings } from 'lucide-react'
+import { Home, Database, MessageCircle, FolderOpen, Settings, Activity } from 'lucide-react'
 
 const Navigation = () => {
   const location = useLocation()
@@ -11,6 +11,7 @@ const Navigation = () => {
     { path: '/action-groups', name: 'Action Groups', icon: Settings },
     { path: '/data', name: 'Data Viewer', icon: FolderOpen },
     { path: '/chat', name: 'AI Chat', icon: MessageCircle },
+    { path: '/streaming-chat', name: 'Streaming Chat', icon: Activity },
   ]
 
   return (

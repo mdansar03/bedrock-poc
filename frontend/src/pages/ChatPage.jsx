@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { chatAPI, agentAPI, getLatestAgentAlias } from "../utils/api";
 import DataSourceSelector from "../components/DataSourceSelector";
+import { EnhancedHTMLContent } from "../components/HTMLContent";
 
 const ChatPage = () => {
   const [messages, setMessages] = useState([
@@ -44,6 +45,31 @@ const ChatPage = () => {
     pdfs: [],
     documents: [],
   });
+  
+  // Enhanced agent settings
+  const [useEnhancedAgent, setUseEnhancedAgent] = useState(false);
+  const [agentModel, setAgentModel] = useState("anthropic.claude-3-sonnet-20240229-v1:0");
+  const [temperature, setTemperature] = useState(0.7);
+  const [topP, setTopP] = useState(0.9);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [historyConfig, setHistoryConfig] = useState({
+    enabled: true,
+    maxMessages: 6,
+    contextWeight: "balanced"
+  });
+  
+  // HTML formatting settings
+  const [showHTMLFormatInfo, setShowHTMLFormatInfo] = useState(false);
+  
+  // Available models for enhanced agent
+  const enhancedModels = [
+    { id: "anthropic.claude-3-sonnet-20240229-v1:0", name: "Claude 3 Sonnet", provider: "Anthropic" },
+    { id: "anthropic.claude-3-haiku-20240307-v1:0", name: "Claude 3 Haiku", provider: "Anthropic" },
+    { id: "anthropic.claude-3-opus-20240229-v1:0", name: "Claude 3 Opus", provider: "Anthropic" },
+    { id: "amazon.titan-text-express-v1", name: "Titan Text Express", provider: "Amazon" },
+    { id: "meta.llama3-8b-instruct-v1:0", name: "Llama 3 8B", provider: "Meta" },
+    { id: "meta.llama3-70b-instruct-v1:0", name: "Llama 3 70B", provider: "Meta" }
+  ];
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -108,17 +134,21 @@ const ChatPage = () => {
         ? await agentAPI.test()
         : await chatAPI.testKnowledgeBase();
 
+      const testContent = `${useAgent ? "Agent" : "Knowledge Base"} Test Result:\n\n${
+        response.data.answer || response.data.response
+      }`;
+      
       const botMessage = {
         id: Date.now() + 1,
         type: "bot",
-        content: `${useAgent ? "Agent" : "Knowledge Base"} Test Result:\n\n${
-          response.data.answer || response.data.response
-        }`,
+        content: testContent,
+        htmlContent: response.data.answerHTML || testContent,
         sources: response.data.sources || response.data.citations,
         timestamp: new Date().toISOString(),
         isTest: true,
         method: response.method || (useAgent ? "agent" : "knowledge_base"),
         agentMetadata: response.data.agentMetadata,
+        metadata: response.data.metadata,
       };
 
       setMessages((prev) => [...prev, botMessage]);
@@ -159,8 +189,28 @@ const ChatPage = () => {
     try {
       let response;
 
-      if (useAgent && agentInfo) {
-        // Prepare data sources for filtering (only include non-empty arrays)
+      if (useEnhancedAgent) {
+        // Enhanced Agent Mode with new parameter structure
+        const dataSources = {
+          websites: selectedDataSources.websites || [],
+          pdfs: selectedDataSources.pdfs || [],
+          documents: selectedDataSources.documents || []
+        };
+
+        response = await agentAPI.sendEnhancedMessage({
+          message: userMessage.content,
+          model: agentModel,
+          temperature,
+          topP,
+          systemPrompt: systemPrompt || null,
+          history: historyConfig,
+          dataSources,
+          options: {
+            useEnhancement: enhancementOptions.requestElaboration
+          }
+        });
+      } else if (useAgent && agentInfo) {
+        // Original Agent Mode - Prepare data sources for filtering (only include non-empty arrays)
         const dataSources = {};
         if (selectedDataSources.websites?.length > 0) {
           dataSources.websites = selectedDataSources.websites;
@@ -214,11 +264,13 @@ const ChatPage = () => {
         id: Date.now() + 1,
         type: "bot",
         content: response.data.answer,
+        htmlContent: response.data.answerHTML || response.data.answer, // Use HTML version if available
         sources: response.data.sources || response.data.citations,
         model: response.data.model,
         method: response.data.method,
         agentMetadata: response.data.agentMetadata,
         appliedFilters: response.data.appliedFilters,
+        metadata: response.data.metadata, // Include full metadata for HTML formatting info
         timestamp: new Date().toISOString(),
       };
 
@@ -257,10 +309,16 @@ const ChatPage = () => {
           <div className="flex items-center">
             <MessageCircle className="w-8 h-8 text-blue-600 mr-3" />
             <h1 className="text-3xl font-bold text-gray-900">AI Chat</h1>
-            {useAgent && agentInfo && (
+            {useEnhancedAgent && (
+              <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                <Zap size={12} className="mr-1" />
+                Enhanced Agent
+              </span>
+            )}
+            {useAgent && agentInfo && !useEnhancedAgent && (
               <span className="ml-3 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                 <Zap size={12} className="mr-1" />
-                Agent Mode
+                Standard Agent
               </span>
             )}
           </div>
@@ -285,8 +343,11 @@ const ChatPage = () => {
         </div>
         <p className="text-gray-600">
           Ask questions about your scraped content. I'll use{" "}
-          {useAgent ? "intelligent agents" : "the knowledge base"} to provide
-          accurate answers.
+          {useEnhancedAgent 
+            ? "enhanced agents with advanced configuration" 
+            : useAgent 
+              ? "intelligent agents" 
+              : "the knowledge base"} to provide accurate answers.
         </p>
 
         {/* Data Source Filter */}
@@ -303,24 +364,200 @@ const ChatPage = () => {
           <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
             <h3 className="text-lg font-semibold mb-3">Chat Settings</h3>
 
-            {/* Agent Mode Toggle */}
+            {/* Enhanced Agent Mode Toggle */}
+            <div className="mb-4 p-3 bg-green-50 rounded border border-green-200">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={useEnhancedAgent}
+                  onChange={(e) => setUseEnhancedAgent(e.target.checked)}
+                  className="mr-2 h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <span className="text-sm font-medium text-green-800">
+                  🚀 Use Enhanced Agent Mode
+                </span>
+              </label>
+              <p className="text-xs text-green-600 ml-6">
+                Advanced agent with temperature, model selection, and conversation history
+              </p>
+            </div>
+
+            {useEnhancedAgent && (
+              <div className="space-y-4 p-3 bg-blue-50 rounded border border-blue-200 mb-4">
+                <h4 className="text-sm font-semibold text-blue-900">Enhanced Agent Configuration</h4>
+                
+                {/* Model Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    AI Model
+                  </label>
+                  <select
+                    value={agentModel}
+                    onChange={(e) => setAgentModel(e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {enhancedModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name} ({model.provider})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Temperature Slider */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Temperature: {temperature}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.1"
+                    value={temperature}
+                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Controls creativity. Lower = more focused, Higher = more creative
+                  </p>
+                </div>
+
+                {/* TopP Slider */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Top P: {topP}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.1"
+                    value={topP}
+                    onChange={(e) => setTopP(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Controls diversity of word selection
+                  </p>
+                </div>
+
+                {/* System Prompt */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    System Prompt (Optional)
+                  </label>
+                  
+                  {/* Predefined Prompt Options */}
+                  <div className="mb-2">
+                    <select
+                      onChange={(e) => setSystemPrompt(e.target.value)}
+                      className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500"
+                      value=""
+                    >
+                      <option value="">Choose a preset or write custom...</option>
+                      <option value="You are a helpful AI assistant. Format all responses using proper HTML markup with headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags for technical terms. Structure content clearly with HTML hierarchy for optimal readability.">Default HTML Assistant</option>
+                      <option value="You are a technical documentation expert. Provide detailed, structured responses with examples using HTML formatting. Use h2 for main sections, h3 for subsections, ul/ol for lists, strong for important terms, and code tags for technical elements. Ensure responses are well-structured and professional.">Technical Expert (HTML)</option>
+                      <option value="You are a business consultant. Provide strategic insights and recommendations using HTML formatting. Structure responses with clear headings, bullet points for key recommendations, and emphasis on important business terms. Use professional formatting throughout.">Business Consultant (HTML)</option>
+                      <option value="You are an educational tutor. Explain concepts clearly using HTML formatting with headings for topics, numbered lists for steps, bullet points for key concepts, and emphasis for important information. Make complex topics accessible through proper structure.">Educational Tutor (HTML)</option>
+                    </select>
+                  </div>
+                  
+                  <textarea
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    placeholder="You are a helpful AI assistant. Format responses using proper HTML markup for better readability..."
+                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    rows={3}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Define the AI's role and behavior (HTML formatting encouraged for better display)
+                  </p>
+                </div>
+
+                {/* History Configuration */}
+                <div className="space-y-2">
+                  <h5 className="text-sm font-medium text-gray-700">Conversation History</h5>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={historyConfig.enabled}
+                      onChange={(e) => setHistoryConfig(prev => ({ ...prev, enabled: e.target.checked }))}
+                      className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <span className="text-sm">Enable conversation history</span>
+                  </label>
+
+                  {historyConfig.enabled && (
+                    <div className="ml-6 space-y-2">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">
+                          Max Messages: {historyConfig.maxMessages}
+                        </label>
+                        <input
+                          type="range"
+                          min="1"
+                          max="20"
+                          value={historyConfig.maxMessages}
+                          onChange={(e) => setHistoryConfig(prev => ({ ...prev, maxMessages: parseInt(e.target.value) }))}
+                          className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Context Weight</label>
+                        <select
+                          value={historyConfig.contextWeight}
+                          onChange={(e) => setHistoryConfig(prev => ({ ...prev, contextWeight: e.target.value }))}
+                          className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500"
+                        >
+                          <option value="light">Light</option>
+                          <option value="balanced">Balanced</option>
+                          <option value="heavy">Heavy</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Agent Mode Toggle (Original) */}
             <div className="mb-4">
               <label className="flex items-center">
                 <input
                   type="checkbox"
-                  checked={useAgent && agentInfo}
+                  checked={useAgent && agentInfo && !useEnhancedAgent}
                   onChange={(e) => setUseAgent(e.target.checked && agentInfo)}
-                  disabled={!agentInfo}
+                  disabled={!agentInfo || useEnhancedAgent}
                   className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
                 <span className="text-sm font-medium">
-                  Use Bedrock Agent {!agentInfo && "(Not Available)"}
+                  Use Standard Bedrock Agent {!agentInfo && "(Not Available)"}
                 </span>
               </label>
               <p className="text-xs text-gray-500 ml-6">
                 {agentInfo
                   ? "Use intelligent agents for enhanced responses"
                   : "Agent not configured - will use direct knowledge base"}
+              </p>
+            </div>
+
+            {/* HTML Formatting Options */}
+            <div className="mb-4 p-3 bg-purple-50 rounded border border-purple-200">
+              <h4 className="text-sm font-semibold text-purple-900 mb-2">HTML Response Formatting</h4>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={showHTMLFormatInfo}
+                  onChange={(e) => setShowHTMLFormatInfo(e.target.checked)}
+                  className="mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                />
+                <span className="text-sm text-purple-800">Show HTML format information</span>
+              </label>
+              <p className="text-xs text-purple-600 ml-6">
+                Display technical details about HTML processing and formatting
               </p>
             </div>
 
@@ -375,7 +612,7 @@ const ChatPage = () => {
             </div>
 
             {/* Agent Info */}
-            {agentInfo && (
+            {agentInfo && !useEnhancedAgent && (
               <div className="mt-4 p-3 bg-blue-50 rounded border border-blue-200">
                 <h5 className="text-sm font-semibold text-blue-900">
                   Agent Information
@@ -443,7 +680,19 @@ const ChatPage = () => {
                         : "bg-gray-100 text-gray-900"
                     }`}
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    {/* Render HTML content for bot messages, plain text for user messages */}
+                    {message.type === "bot" ? (
+                      <EnhancedHTMLContent 
+                        content={message.content}
+                        htmlContent={message.htmlContent}
+                        preferHTML={true}
+                        showFormatInfo={showHTMLFormatInfo}
+                        metadata={message.metadata}
+                        className="bot-response"
+                      />
+                    ) : (
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    )}
 
                     {/* Applied Filters */}
                     {message.appliedFilters && (
@@ -645,15 +894,25 @@ const ChatPage = () => {
               Session ID: {sessionId || "New session will be created"}
             </span>
             <div className="flex items-center space-x-4">
-              <span>Mode: {useAgent ? "Agent" : "Knowledge Base"}</span>
+              <span>
+                Mode: {useEnhancedAgent ? "Enhanced Agent" : useAgent ? "Standard Agent" : "Knowledge Base"}
+              </span>
               <span>
                 Model:{" "}
-                {availableModels[
-                  Object.keys(availableModels).find(
-                    (key) => availableModels[key].id === selectedModel
-                  )
-                ]?.name || "Default"}
+                {useEnhancedAgent
+                  ? enhancedModels.find(m => m.id === agentModel)?.name || agentModel
+                  : availableModels[
+                      Object.keys(availableModels).find(
+                        (key) => availableModels[key].id === selectedModel
+                      )
+                    ]?.name || "Default"}
               </span>
+              {useEnhancedAgent && (
+                <>
+                  <span>Temp: {temperature}</span>
+                  <span>TopP: {topP}</span>
+                </>
+              )}
             </div>
           </div>
         </div>

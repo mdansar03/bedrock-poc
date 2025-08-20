@@ -43,6 +43,17 @@ RESPONSE GUIDELINES:
 - Include relevant examples or context when helpful
 - Structure your responses clearly and logically
 - When conversation context shows related previous questions, connect your answers appropriately
+- **ALWAYS FORMAT RESPONSES IN HTML** for better structure and readability
+
+HTML FORMATTING REQUIREMENTS:
+- Use HTML tags to structure your responses (h2, h3, p, ul, ol, li, strong, em, code)
+- Format headings with appropriate HTML heading tags (h2 for main topics, h3 for subtopics)
+- Use paragraphs (p) for body text with proper spacing
+- Create lists (ul/ol) for multiple items, steps, or key points
+- Emphasize important information with strong or em tags
+- Use code tags for technical terms, file names, or code snippets
+- Structure complex information with proper HTML hierarchy
+- Ensure responses are well-formatted and easy to read in a web interface
 
 CONTEXT AWARENESS:
 - Pay attention to conversation history marked as [RECENT] for the most current context
@@ -111,7 +122,7 @@ router.get('/current', async (req, res) => {
     res.json({
       success: true,
       data: {
-        instructions: response.agent.instruction || DEFAULT_INSTRUCTIONS,
+        instructions: response.agent.instruction || "No instructions configured in AWS Console",
         agentId: response.agent.agentId,
         agentName: response.agent.agentName,
         agentStatus: response.agent.agentStatus,

@@ -204,7 +204,43 @@ export const agentAPI = {
       ...options, // This now includes dataSources, model, temperature, topP, systemPrompt, history, etc.
     };
 
-    const response = await api.post("/chat/agent", payload);
+    const response = await api.post("/chat/agent/", payload);
+    return response.data;
+  },
+
+  // Enhanced Agent Chat with new parameter structure
+  sendEnhancedMessage: async ({
+    message,
+    model = "anthropic.claude-3-sonnet-20240229-v1:0",
+    temperature = 0.7,
+    topP = 0.9,
+    systemPrompt = null,
+    history = {
+      enabled: true,
+      maxMessages: 6,
+      contextWeight: "balanced"
+    },
+    dataSources = {
+      websites: [],
+      pdfs: [],
+      documents: []
+    },
+    options = {
+      useEnhancement: true
+    }
+  }) => {
+    const payload = {
+      message,
+      model,
+      temperature,
+      topP,
+      systemPrompt,
+      history,
+      dataSources,
+      options
+    };
+
+    const response = await api.post("/chat/agent/", payload);
     return response.data;
   },
 
@@ -236,7 +272,7 @@ export const agentAPI = {
       options,
     };
 
-    const response = await api.post("/chat/agent", payload);
+    const response = await api.post("/chat/agent/", payload);
     return response.data;
   },
 

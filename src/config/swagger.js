@@ -413,6 +413,10 @@ const options = {
         description: 'Direct chat with AI models and foundation model management'
       },
       {
+        name: 'Streaming Chat',
+        description: 'Real-time streaming chat with Server-Sent Events (SSE) for faster responses'
+      },
+      {
         name: 'Agent',
         description: 'Bedrock Agent integration for knowledge base queries'
       },

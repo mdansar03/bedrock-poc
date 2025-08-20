@@ -1,5 +1,5 @@
-const { BedrockAgentRuntimeClient, RetrieveAndGenerateCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
-const { BedrockRuntimeClient, InvokeModelCommand } = require('@aws-sdk/client-bedrock-runtime');
+const { BedrockAgentRuntimeClient, RetrieveAndGenerateCommand, RetrieveAndGenerateStreamCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
+const { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
 const logger = require('../utils/logger');
 
 // Rate limiting and queue management
@@ -513,6 +513,362 @@ class BedrockService {
     } catch (error) {
       logger.error('Error invoking model:', error);
       throw new Error(`Failed to invoke model: ${error.message}`);
+    }
+  }
+
+  /**
+   * TRUE streaming direct model invocation using AWS InvokeModelWithResponseStream
+   * @param {string} prompt - User prompt
+   * @param {string} modelId - Model ID to use
+   * @param {Object} options - Generation options
+   * @param {Object} streamCallbacks - Streaming callback functions
+   * @returns {Promise<void>}
+   */
+  async invokeModelStreaming(prompt, modelId = null, options = {}, streamCallbacks = {}) {
+    const startTime = Date.now();
+    const {
+      onChunk = () => {},
+      onComplete = () => {},
+      onError = () => {}
+    } = streamCallbacks;
+
+    try {
+      const selectedModel = this.getModelId(modelId);
+      const {
+        temperature = 0.7,
+        topP = 0.9,
+        maxTokens = 1000
+      } = options;
+
+      logger.info(`🚀 TRUE STREAMING MODEL INVOCATION: ${selectedModel}`);
+
+      let fullText = "";
+      let tokensUsed = 0;
+
+      // Create model body based on provider for streaming
+      let modelBody;
+      if (selectedModel.includes('anthropic')) {
+        modelBody = JSON.stringify({
+          anthropic_version: "bedrock-2023-05-31",
+          max_tokens: maxTokens,
+          temperature: temperature,
+          top_p: topP,
+          messages: [
+            {
+              role: "user",
+              content: prompt
+            }
+          ]
+          // Note: stream parameter is handled by the streaming command
+        });
+      } else if (selectedModel.includes('amazon.titan')) {
+        modelBody = JSON.stringify({
+          inputText: prompt,
+          textGenerationConfig: {
+            temperature: temperature,
+            topP: topP,
+            maxTokenCount: maxTokens,
+            stopSequences: []
+          }
+        });
+      } else if (selectedModel.includes('meta.llama')) {
+        modelBody = JSON.stringify({
+          prompt: prompt,
+          temperature: temperature,
+          top_p: topP,
+          max_gen_len: maxTokens
+        });
+      } else {
+        throw new Error(`Streaming not supported for model: ${selectedModel}`);
+      }
+
+      // Execute with rate limiting using TRUE AWS streaming API
+      await this.requestQueue.add(async () => {
+        // Use the CORRECT AWS streaming command
+        const command = new InvokeModelWithResponseStreamCommand({
+          modelId: selectedModel,
+          body: modelBody,
+          contentType: "application/json",
+          accept: "application/json"
+        });
+
+        logger.info("📡 Invoking AWS InvokeModelWithResponseStream API...");
+        const response = await this.runtimeClient.send(command);
+        
+        logger.info("🔍 AWS STREAMING RESPONSE STRUCTURE:", {
+          hasBody: !!response.body,
+          bodyType: response.body ? typeof response.body : 'none',
+          isAsyncIterable: response.body ? Symbol.asyncIterator in response.body : false
+        });
+
+        // Handle TRUE streaming response from AWS
+        if (response.body) {
+          for await (const chunk of response.body) {
+            logger.info("📦 REAL-TIME CHUNK FROM AWS:", {
+              chunkKeys: Object.keys(chunk || {}),
+              hasChunk: !!chunk.chunk,
+              hasBytes: !!chunk.chunk?.bytes,
+              chunkStructure: JSON.stringify(chunk, null, 2).substring(0, 500),
+              decodedText: chunk.chunk?.bytes ? new TextDecoder().decode(chunk.chunk.bytes) : 'NO BYTES FOUND'
+            });
+
+            // Try multiple possible chunk structures for direct model
+            let textChunk = null;
+            
+            if (chunk.chunk?.bytes) {
+              textChunk = new TextDecoder().decode(chunk.chunk.bytes);
+            } else if (chunk.bytes) {
+              textChunk = new TextDecoder().decode(chunk.bytes);  
+            } else if (chunk.delta?.text) {
+              textChunk = chunk.delta.text;
+            } else if (chunk.contentBlockDelta?.delta?.text) {
+              textChunk = chunk.contentBlockDelta.delta.text;
+            } else if (chunk.message?.content?.[0]?.text) {
+              textChunk = chunk.message.content[0].text;
+            }
+            
+            if (textChunk && textChunk.length > 0) {
+              fullText += textChunk;
+              
+              // Send chunk immediately to frontend
+              onChunk(textChunk);
+              
+              logger.info("⚡ DIRECT MODEL CHUNK FORWARDED:", {
+                length: textChunk.length,
+                preview: textChunk.substring(0, 30) + "...",
+                source: chunk.chunk?.bytes ? 'chunk.bytes' : 'alternative structure'
+              });
+            } else {
+              logger.warn("❌ NO TEXT IN DIRECT MODEL CHUNK - Available fields:", {
+                chunkKeys: Object.keys(chunk),
+                chunkChunkKeys: chunk.chunk ? Object.keys(chunk.chunk) : [],
+                hasBytes: !!chunk.chunk?.bytes,
+                hasDelta: !!chunk.delta,
+                hasContentBlockDelta: !!chunk.contentBlockDelta
+              });
+            }
+
+            if (chunk.chunk?.internalServerException) {
+              throw new Error('Internal server error from AWS');
+            } else if (chunk.chunk?.modelStreamErrorException) {
+              throw new Error('Model stream error from AWS');
+            } else if (chunk.chunk?.modelTimeoutException) {
+              throw new Error('Model timeout from AWS');
+            } else if (chunk.chunk?.throttlingException) {
+              throw new Error('Throttling error from AWS');
+            }
+
+            // Handle token usage if available
+            if (chunk.chunk?.amazon?.usage) {
+              tokensUsed = chunk.chunk.amazon.usage.inputTokens + chunk.chunk.amazon.usage.outputTokens;
+            }
+          }
+        }
+      });
+
+      const totalTime = Date.now() - startTime;
+      
+      logger.info('🎉 TRUE STREAMING MODEL COMPLETED:', {
+        model: selectedModel,
+        textLength: fullText.length,
+        totalTime: `${totalTime}ms`,
+        tokensUsed
+      });
+
+      onComplete({
+        model: selectedModel,
+        totalTime: `${totalTime}ms`,
+        tokensUsed,
+        fullText
+      });
+
+    } catch (error) {
+      logger.error('❌ TRUE STREAMING MODEL FAILED:', error);
+      onError(new Error(`Streaming model invocation failed: ${error.message}`));
+    }
+  }
+
+  /**
+   * TRUE streaming knowledge base query using AWS RetrieveAndGenerateStream
+   * @param {string} query - User query
+   * @param {string} sessionId - Session ID
+   * @param {string} modelId - Model ID to use
+   * @param {Object} enhancementOptions - Enhancement options
+   * @param {Object} streamCallbacks - Streaming callback functions
+   * @returns {Promise<void>}
+   */
+  async queryKnowledgeBaseStreaming(query, sessionId = null, modelId = null, enhancementOptions = {}, streamCallbacks = {}) {
+    const startTime = Date.now();
+    const {
+      onSources = () => {},
+      onChunk = () => {},
+      onComplete = () => {},
+      onError = () => {}
+    } = streamCallbacks;
+
+    try {
+      if (!this.knowledgeBaseId) {
+        throw new Error('Knowledge base ID is not configured');
+      }
+
+      logger.info(`🚀 TRUE STREAMING KNOWLEDGE BASE QUERY: ${query.substring(0, 100)}...`);
+
+      const selectedModel = this.getModelId(modelId);
+      let fullText = "";
+      let sources = [];
+      let tokensUsed = 0;
+
+      // Execute with rate limiting using TRUE AWS streaming API (no sessions for reliability)
+      let response;
+      await this.requestQueue.add(async () => {
+        // Use the CORRECT AWS streaming command for Knowledge Base
+        const command = new RetrieveAndGenerateStreamCommand({
+          input: {
+            text: query
+          },
+          retrieveAndGenerateConfiguration: {
+            type: 'KNOWLEDGE_BASE',
+            knowledgeBaseConfiguration: {
+              knowledgeBaseId: this.knowledgeBaseId,
+              modelArn: `arn:aws:bedrock:${process.env.AWS_REGION || 'us-east-1'}::foundation-model/${selectedModel}`,
+              retrievalConfiguration: {
+                vectorSearchConfiguration: {
+                  numberOfResults: 5
+                }
+              },
+              generationConfiguration: {
+                inferenceConfig: {
+                  textInferenceConfig: {
+                    temperature: enhancementOptions.temperature || 0.7,
+                    topP: enhancementOptions.topP || 0.9,
+                    maxTokens: enhancementOptions.maxTokens || 2000,
+                    stopSequences: []
+                  }
+                }
+              }
+            }
+          }
+          // No sessionId - AWS streaming works better without custom sessions
+        });
+
+        logger.info("📡 Invoking AWS RetrieveAndGenerateStream API (no session for reliability)...");
+        response = await this.agentRuntimeClient.send(command);
+        
+        // logger.info("🔍 AWS KB STREAMING RESPONSE STRUCTURE:", {
+        //   hasStream: !!response.stream,
+        //   streamType: response.stream ? typeof response.stream : 'none',
+        //   isAsyncIterable: response.stream ? Symbol.asyncIterator in response.stream : false
+        // });
+
+        console.log("🚀 ------------------------> RESPONSE.stream:", response.stream);
+        // Handle TRUE streaming response from AWS Knowledge Base
+        if (response.stream) {
+          for await (const chunk of response.stream) {
+            // logger.info("📦 REAL-TIME KB CHUNK FROM AWS:", {
+            //   chunkKeys: Object.keys(chunk || {}),
+            //   hasRetrievedReferences: !!chunk.retrievedReferences,
+            //   hasGeneratedResponsePart: !!chunk.generatedResponsePart,
+            //   chunkStructure: JSON.stringify(chunk, null, 2).substring(0, 500),
+            //   textContent: chunk.generatedResponsePart?.textResponsePart?.text || 'NO TEXT FOUND'
+            // });
+
+            // Process sources/citations as they arrive
+            if (chunk.retrievedReferences && chunk.retrievedReferences.length > 0) {
+              const newSources = chunk.retrievedReferences.map(ref => ({
+                content: ref.content?.text || '',
+                metadata: ref.metadata || {},
+                documentId: ref.location?.s3Location?.uri || '',
+                relevanceScore: ref.metadata?.score || 0,
+                title: ref.metadata?.title || ref.content?.text?.substring(0, 100) || 'Document',
+                url: ref.location?.s3Location?.uri || '#'
+              }));
+              
+              sources.push(...newSources);
+              onSources(newSources);
+              
+              // logger.info("📄 SOURCES STREAMED:", { count: newSources.length });
+            }
+
+            // Process generated text as it streams (try multiple possible structures)
+            let textChunk = null;
+            
+            if (chunk.generatedResponsePart?.textResponsePart?.text) {
+              textChunk = chunk.generatedResponsePart.textResponsePart.text;
+            } else if (chunk.chunk?.bytes) {
+              textChunk = new TextDecoder().decode(chunk.chunk.bytes);
+            } else if (chunk.output?.text) {
+              textChunk = chunk.output.text;
+            } else if (chunk.text) {
+              textChunk = chunk.text;
+            } else if (chunk.completion?.text) {
+              textChunk = chunk.completion.text;
+            }
+            
+            if (textChunk && textChunk.length > 0) {
+              fullText += textChunk;
+              
+              // Send chunk immediately to frontend
+              onChunk(textChunk);
+              
+              // logger.info("⚡ KB CHUNK FORWARDED:", {
+              //   length: textChunk.length,
+              //   preview: textChunk.substring(0, 30) + "...",
+              //   source: 'generatedResponsePart' + (chunk.generatedResponsePart ? '' : ' (fallback)')
+              // });
+            } else {
+              logger.warn("❌ NO TEXT FOUND IN CHUNK - Available fields:", {
+                chunkKeys: Object.keys(chunk),
+                hasGeneratedResponsePart: !!chunk.generatedResponsePart,
+                generatedResponsePartKeys: chunk.generatedResponsePart ? Object.keys(chunk.generatedResponsePart) : [],
+                textResponsePartKeys: chunk.generatedResponsePart?.textResponsePart ? Object.keys(chunk.generatedResponsePart.textResponsePart) : []
+              });
+            }
+
+            // Handle errors in stream
+            if (chunk.internalServerException) {
+              throw new Error('Internal server error from AWS KB');
+            } else if (chunk.modelStreamErrorException) {
+              throw new Error('Model stream error from AWS KB');
+            } else if (chunk.throttlingException) {
+              throw new Error('Throttling error from AWS KB');
+            }
+          }
+        }
+
+        // Estimate token usage (rough approximation)
+        tokensUsed = Math.ceil(query.length / 4) + Math.ceil(fullText.length / 4);
+      });
+      
+      const totalTime = Date.now() - startTime;
+
+      logger.info('🎉 TRUE STREAMING KB COMPLETED:', {
+        model: selectedModel,
+        textLength: fullText.length,
+        sourceCount: sources.length,
+        totalTime: `${totalTime}ms`,
+        tokensUsed
+      });
+
+      onComplete({
+        sessionId: `kb-${Date.now()}`, // Generate fresh session ID each time
+        model: selectedModel,
+        totalTime: `${totalTime}ms`,
+        tokensUsed,
+        sourceCount: sources.length,
+        fullText
+      });
+
+    } catch (error) {
+      logger.error('❌ TRUE STREAMING KB FAILED:', error);
+      
+      // Provide specific error messages
+      if (error.message?.includes('knowledge base')) {
+        onError(new Error(`Knowledge base not found or not accessible: ${this.knowledgeBaseId}`));
+      } else if (error.message?.includes('rate limit') || error.message?.includes('throttl')) {
+        onError(new Error('Rate limit exceeded. Please try again in a moment.'));
+      } else {
+        onError(new Error(`Streaming knowledge base query failed: ${error.message}`));
+      }
     }
   }
 

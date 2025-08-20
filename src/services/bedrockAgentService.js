@@ -10,6 +10,7 @@ const {
   PrepareAgentCommand,
 } = require("@aws-sdk/client-bedrock-agent");
 const logger = require("../utils/logger");
+const htmlProcessor = require("../utils/htmlProcessor");
 
 /**
  * Enhanced Bedrock Agent Service for intelligent knowledge retrieval
@@ -442,6 +443,9 @@ class BedrockAgentService {
         enhancement += `\n\nPlease provide a detailed, well-structured response with relevant examples and context.`;
     }
 
+    // Add HTML formatting instruction to all enhancements
+    enhancement += `\n\nIMPORTANT: Format your response using proper HTML markup for better readability. Use headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags where appropriate. Structure the content with clear HTML hierarchy.`;
+
     return enhancement;
   }
 
@@ -655,6 +659,7 @@ Please answer the current query while being aware of the conversation context ab
         inferenceConfig: agentParams.inferenceConfiguration,
         customModel: options.model,
         hasSystemPrompt: !!options.systemPrompt,
+        fullQuery: enhancedQuery, // DEBUG: See the complete query being sent
       });
 
       // Create the invoke agent command
@@ -769,19 +774,6 @@ Please answer the current query while being aware of the conversation context ab
           systemPrompt: options.systemPrompt,
           conversationContextUsed: !!conversationContext,
           historyOptions: historyOptions,
-        }
-      );
-
-      return this.buildFinalResponse(
-        session,
-        agentResponse,
-        analysis,
-        options.dataSources,
-        {
-          temperature: options.temperature,
-          topP: options.topP,
-          model: options.model,
-          systemPrompt: options.systemPrompt,
         }
       );
     } catch (error) {
@@ -922,8 +914,28 @@ Please answer the current query while being aware of the conversation context ab
         );
       }
 
+      // Process the text response through HTML processor
+      const processedResponse = htmlProcessor.processBedrockResponse(fullText.trim(), {
+        enhanceFormatting: true,
+        addMetadata: false // We'll add metadata later in buildFinalResponse
+      });
+
+      logger.debug('HTML processing result:', {
+        format: processedResponse.format,
+        processingTime: processedResponse.processingTime,
+        enhanced: processedResponse.enhanced,
+        originalLength: fullText.length,
+        htmlLength: processedResponse.html.length
+      });
+
       return {
-        text: fullText.trim(),
+        text: processedResponse.originalText, // Keep original text for compatibility
+        html: processedResponse.html, // Add processed HTML version
+        htmlMetadata: {
+          format: processedResponse.format,
+          processingTime: processedResponse.processingTime,
+          enhanced: processedResponse.enhanced
+        },
         citations,
         trace,
         responseTime,
@@ -1226,8 +1238,26 @@ Please answer the current query while being aware of the conversation context ab
         responseTime: `${responseTime}ms`,
       });
 
+      // Process the text response through HTML processor (alternative processing)
+      const processedResponse = htmlProcessor.processBedrockResponse(fullText.trim(), {
+        enhanceFormatting: true,
+        addMetadata: false // We'll add metadata later in buildFinalResponse
+      });
+
+      logger.debug('Alternative HTML processing result:', {
+        format: processedResponse.format,
+        processingTime: processedResponse.processingTime,
+        enhanced: processedResponse.enhanced
+      });
+
       return {
-        text: fullText.trim(),
+        text: processedResponse.originalText, // Keep original text for compatibility
+        html: processedResponse.html, // Add processed HTML version
+        htmlMetadata: {
+          format: processedResponse.format,
+          processingTime: processedResponse.processingTime,
+          enhanced: processedResponse.enhanced
+        },
         citations,
         trace,
         responseTime,
@@ -1242,6 +1272,457 @@ Please answer the current query while being aware of the conversation context ab
         responseTime: Date.now() - startTime,
         tokensUsed: 0,
       };
+    }
+  }
+
+  /**
+   * Invoke Bedrock Agent with streaming response
+   * @param {string} query - User query
+   * @param {string} sessionId - Session ID for conversation continuity
+   * @param {Object} options - Additional options including dataSources filter, inference parameters, history settings
+   * @param {Object} streamCallbacks - Streaming callback functions
+   * @param {Function} streamCallbacks.onChunk - Called when text chunk is received
+   * @param {Function} streamCallbacks.onCitation - Called when citation is received
+   * @param {Function} streamCallbacks.onMetadata - Called when metadata is received
+   * @param {Function} streamCallbacks.onComplete - Called when streaming is complete
+   * @param {Function} streamCallbacks.onError - Called when error occurs
+   * @returns {Promise<void>}
+   */
+  async invokeAgentStreaming(query, sessionId = null, options = {}, streamCallbacks = {}) {
+    try {
+      // Validate agent configuration
+      if (!this.agentId) {
+        throw new Error(
+          "BEDROCK_AGENT_ID is not configured. Please set up a Bedrock Agent first."
+        );
+      }
+
+      const startTime = Date.now();
+      const {
+        onChunk = () => {},
+        onCitation = () => {},
+        onMetadata = () => {},
+        onComplete = () => {},
+        onError = () => {}
+      } = streamCallbacks;
+
+      // Get or create session
+      const session = this.getOrCreateSession(sessionId, options.sessionConfig);
+
+      // Store user message in conversation history
+      this.addToConversationHistory(session.id, {
+        type: "user",
+        content: query,
+        metadata: {
+          hasDataSourceFilters: !!options.dataSources,
+          hasCustomModel: !!options.model,
+          hasSystemPrompt: !!options.systemPrompt,
+          temperature: options.temperature,
+          topP: options.topP,
+          timestamp: new Date().toISOString(),
+          streaming: true,
+        },
+      });
+
+      // Analyze query and determine approach
+      const analysis = this.analyzeQuery(query, session.context);
+
+      // Build conversation context if enabled
+      const historyOptions = {
+        enabled: true,
+        maxMessages: 6,
+        contextWeight: "balanced",
+        ...options.history,
+      };
+
+      let conversationContext = null;
+      if (historyOptions.enabled && session.conversationHistory.length > 1) {
+        conversationContext = this.buildConversationContext(session.id, {
+          maxMessages: historyOptions.maxMessages,
+          contextWeight: historyOptions.contextWeight,
+          prioritizeRecent: true,
+        });
+      }
+
+      logger.info(`Invoking Streaming Bedrock Agent for query analysis:`, {
+        sessionId: session.id,
+        queryLength: query.length,
+        interactionStyle: analysis.interactionStyle,
+        confidence: analysis.confidence,
+        messageCount: session.messageCount,
+        conversationHistoryLength: session.conversationHistory.length,
+        hasConversationContext: !!conversationContext,
+        hasDataSourceFilters: !!options.dataSources,
+        streaming: true,
+      });
+
+      // Apply data source filtering to the query if specified
+      let enhancedQuery =
+        options.useEnhancement !== false ? analysis.queryEnhancement : query;
+
+      // Add conversation context to enhance query with history
+      if (conversationContext) {
+        enhancedQuery = `CONVERSATION CONTEXT:
+${conversationContext}
+
+CURRENT QUERY: ${enhancedQuery}
+
+Please answer the current query while being aware of the conversation context above. Prioritize the current query but use the conversation history to provide more relevant and coherent responses.`;
+        logger.info("Applied conversation context to streaming query");
+      }
+
+      // Apply system prompt if provided
+      if (options.systemPrompt) {
+        enhancedQuery = `${options.systemPrompt}\n\nUser Query: ${enhancedQuery}`;
+        logger.info("Applied custom system prompt to streaming query");
+      }
+
+      if (options.dataSources) {
+        enhancedQuery = this.applyDataSourceFiltering(
+          enhancedQuery,
+          options.dataSources
+        );
+        logger.info("Applied data source filtering to streaming query");
+      }
+
+      // Prepare agent invocation parameters with TRUE streaming enabled
+      const agentParams = {
+        agentId: this.agentId,
+        agentAliasId: options.agentAliasId || this.agentAliasId,
+        sessionId: session.id,
+        inputText: enhancedQuery,
+        enableTrace: process.env.NODE_ENV === "development",
+        sessionState: options.sessionState || {},
+        // CRITICAL: Enable true streaming from AWS (matching Python SDK format)
+        streamingConfigurations: {
+          streamFinalResponse: true
+        },
+        // Additional streaming parameters based on AWS docs
+        endSession: false, // Keep session alive for follow-up
+      };
+
+      // Add inference configuration if temperature or topP is provided
+      if (options.temperature !== null || options.topP !== null) {
+        agentParams.inferenceConfiguration = {};
+
+        if (options.temperature !== null) {
+          agentParams.inferenceConfiguration.temperature = options.temperature;
+        }
+
+        if (options.topP !== null) {
+          agentParams.inferenceConfiguration.topP = options.topP;
+        }
+
+        logger.info(
+          "Added inference configuration to streaming agent params:",
+          agentParams.inferenceConfiguration
+        );
+      }
+
+      logger.info("🚀 STREAMING AGENT INVOCATION with streamingConfigurations", {
+        agentId: this.agentId,
+        agentAliasId: this.agentAliasId,
+        sessionId: session.id,
+        queryPreview: enhancedQuery.substring(0, 150) + "...",
+        enableTrace: agentParams.enableTrace,
+        streamingConfigurations: agentParams.streamingConfigurations,
+        filtersApplied: !!options.dataSources,
+        hasInferenceConfig: !!agentParams.inferenceConfiguration,
+        streaming: true,
+      });
+
+      // Create the invoke agent command
+      const command = new InvokeAgentCommand(agentParams);
+
+      // Add to rate limiting queue and execute with streaming
+      await this.executeWithRateLimit(async () => {
+        const response = await this.agentRuntimeClient.send(command);
+        await this.processAgentResponseStreaming(response, {
+          onChunk,
+          onCitation,
+          onMetadata,
+          onComplete: (finalData) => {
+            const totalTime = Date.now() - startTime;
+            
+            // Store assistant response in conversation history
+            this.addToConversationHistory(session.id, {
+              type: "assistant",
+              content: finalData.fullText || "",
+              responseTime: totalTime,
+              tokensUsed: finalData.tokensUsed || 0,
+              metadata: {
+                citationCount: finalData.citationCount || 0,
+                hasTrace: !!finalData.trace,
+                filtersApplied: !!options.dataSources,
+                conversationContextUsed: !!conversationContext,
+                streaming: true,
+                inferenceParams: {
+                  temperature: options.temperature,
+                  topP: options.topP,
+                  model: options.model,
+                  hasSystemPrompt: !!options.systemPrompt,
+                },
+                timestamp: new Date().toISOString(),
+              },
+            });
+
+            // Update session context
+            session.messageCount++;
+            session.context.topics.push(
+              this.extractTopicFromQuery(analysis.originalQuery)
+            );
+            if (session.context.topics.length > 10) {
+              session.context.topics = session.context.topics.slice(-10);
+            }
+
+            onComplete({
+              sessionId: session.id,
+              totalTime: `${totalTime}ms`,
+              tokensUsed: finalData.tokensUsed || 0,
+              citationCount: finalData.citationCount || 0,
+              fullText: finalData.fullText || "",
+              analysis: analysis,
+              appliedFilters: options.dataSources || null,
+            });
+          },
+          onError
+        });
+      });
+
+    } catch (error) {
+      logger.error("Streaming agent invocation failed:", {
+        error: error.message,
+        agentId: this.agentId,
+        sessionId: sessionId,
+        query: query.substring(0, 100) + "...",
+        hasFilters: !!options.dataSources,
+        streaming: true,
+      });
+
+      // Provide specific error handling for common issues
+      if (error.name === "ResourceNotFoundException") {
+        onError(new Error(
+          `Bedrock Agent not found. Please verify BEDROCK_AGENT_ID: ${this.agentId}`
+        ));
+      } else if (error.name === "AccessDeniedException") {
+        onError(new Error(
+          "Access denied to Bedrock Agent. Please check IAM permissions."
+        ));
+      } else if (error.name === "ThrottlingException") {
+        onError(new Error(
+          "Agent request was throttled. Please try again in a moment."
+        ));
+      } else {
+        onError(new Error(`Agent streaming invocation failed: ${error.message}`));
+      }
+    }
+  }
+
+  /**
+   * Process the streaming agent response with real-time callbacks
+   * @param {Object} response - Raw agent response
+   * @param {Object} streamCallbacks - Streaming callback functions
+   * @returns {Promise<void>}
+   */
+  async processAgentResponseStreaming(response, streamCallbacks) {
+    const startTime = Date.now();
+    let fullText = "";
+    let citations = [];
+    let trace = null;
+    let tokensUsed = 0;
+    let chunkCount = 0; // Track chunk count like Python version
+
+    const {
+      onChunk = () => {},
+      onCitation = () => {},
+      onMetadata = () => {},
+      onComplete = () => {},
+      onError = () => {}
+    } = streamCallbacks;
+
+    try {
+      logger.info("🔍 ANALYZING AWS RESPONSE STRUCTURE:", {
+        hasCompletion: !!response.completion,
+        responseType: typeof response,
+        responseKeys: Object.keys(response || {}),
+        completionType: response.completion ? typeof response.completion : 'none',
+        isAsyncIterable: response.completion ? Symbol.asyncIterator in response.completion : false
+      });
+
+      // Handle streaming response
+      if (response.completion) {
+        for await (const chunk of response.completion) {
+          chunkCount++;
+          const elapsed = Date.now() - startTime;
+          
+          logger.info(`📦 CHUNK #${chunkCount} (at ${elapsed}ms):`, {
+            chunkKeys: Object.keys(chunk || {}),
+            hasChunk: !!chunk.chunk,
+            hasTrace: !!chunk.trace,
+            chunkType: typeof chunk
+          });
+
+          // Process text chunks (simplified like Python version)
+          if (chunk.chunk && chunk.chunk.bytes) {
+            try {
+              const textChunk = new TextDecoder().decode(chunk.chunk.bytes);
+              fullText += textChunk;
+              
+              // Send chunk immediately to frontend
+              onChunk(textChunk);
+              
+              logger.info("✅ TEXT CHUNK DECODED:", {
+                length: textChunk.length,
+                preview: textChunk.substring(0, 50) + (textChunk.length > 50 ? "..." : ""),
+                totalSoFar: fullText.length
+              });
+              
+            } catch (error) {
+              logger.error("❌ Error decoding chunk:", error.message);
+            }
+          }
+
+          // Process attribution/citations  
+          if (chunk.chunk && chunk.chunk.attribution) {
+            const newCitations = chunk.chunk.attribution.citations || [];
+            citations.push(...newCitations);
+            
+            // Send citations to callback immediately
+            newCitations.forEach(citation => {
+              const processedCitation = {
+                content: citation.generatedResponsePart?.textResponsePart?.text || '',
+                metadata: citation.retrievedReferences || [],
+                documentId: citation.retrievedReferences?.[0]?.location?.s3Location?.uri || '',
+                relevanceScore: citation.retrievedReferences?.[0]?.metadata?.score || 0,
+                title: citation.retrievedReferences?.[0]?.metadata?.title || 'Unknown Source',
+                url: citation.retrievedReferences?.[0]?.location?.s3Location?.uri || '#'
+              };
+              onCitation(processedCitation);
+            });
+            
+            logger.debug("Streamed citations:", { count: newCitations.length });
+          }
+
+          // Check for different chunk formats
+          if (chunk.bytes) {
+            logger.info("🔍 PROCESSING DIRECT CHUNK.BYTES");
+            try {
+              const textChunk = new TextDecoder().decode(chunk.bytes);
+              fullText += textChunk;
+              onChunk(textChunk);
+              logger.info("✅ DIRECT BYTES CHUNK RECEIVED:", {
+                length: textChunk.length,
+                preview: textChunk.substring(0, 50) + "..."
+              });
+            } catch (error) {
+              logger.error("❌ ERROR DECODING DIRECT BYTES:", error.message);
+            }
+          }
+
+          // Process final response chunk
+          if (chunk.finalResponse) {
+            logger.info("🔍 PROCESSING FINAL RESPONSE:", {
+              hasText: !!chunk.finalResponse.text,
+              finalResponseKeys: Object.keys(chunk.finalResponse)
+            });
+            
+            if (chunk.finalResponse.text) {
+              const finalText = chunk.finalResponse.text;
+              fullText += finalText;
+              onChunk(finalText);
+              logger.info("✅ FINAL RESPONSE TEXT RECEIVED:", {
+                length: finalText.length,
+                preview: finalText.substring(0, 50) + "..."
+              });
+            } else {
+              logger.warn("⚠️ FINAL RESPONSE HAS NO TEXT:", chunk.finalResponse);
+            }
+          }
+
+          // Process trace information (for debugging)
+          if (chunk.trace) {
+            trace = chunk.trace;
+            onMetadata({ trace: chunk.trace });
+            logger.debug("Streamed trace information");
+          }
+
+          // Track token usage if available
+          if (chunk.metadata?.usage) {
+            tokensUsed =
+              chunk.metadata.usage.inputTokens +
+              chunk.metadata.usage.outputTokens;
+            onMetadata({ tokensUsed });
+            logger.info("📊 TOKEN USAGE:", chunk.metadata.usage);
+          }
+          
+          // Log if chunk doesn't match any expected patterns
+          if (!chunk.chunk && !chunk.bytes && !chunk.finalResponse && !chunk.trace && !chunk.metadata?.usage) {
+            logger.warn("❓ UNKNOWN CHUNK FORMAT:", {
+              chunkKeys: Object.keys(chunk),
+              chunkType: typeof chunk
+            });
+          }
+        }
+      }
+
+      // If no text was captured, check if response has direct text
+      if (!fullText && response.output) {
+        fullText = response.output;
+        onChunk(fullText);
+        logger.debug("Streamed direct output:", { length: fullText.length });
+      }
+
+      // Alternative handling: If streaming didn't work, try immediate chunking
+      if (!fullText && response.completion) {
+        logger.warn("⚠️ No streaming chunks detected, attempting alternative processing");
+        try {
+          const completionArray = [];
+          for await (const chunk of response.completion) {
+            completionArray.push(chunk);
+          }
+          
+          if (completionArray.length === 1 && completionArray[0].chunk?.bytes) {
+            // Single large chunk - simulate streaming
+            const fullResponse = new TextDecoder().decode(completionArray[0].chunk.bytes);
+            logger.info("🔄 SIMULATING STREAMING from single chunk:", { length: fullResponse.length });
+            
+            // Stream word by word with short delays
+            const words = fullResponse.split(' ');
+            for (let i = 0; i < words.length; i++) {
+              const word = i === 0 ? words[i] : ' ' + words[i];
+              onChunk(word);
+              fullText += word;
+              await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
+            }
+          }
+        } catch (altError) {
+          logger.error("Alternative streaming failed:", altError);
+        }
+      }
+
+      const responseTime = Date.now() - startTime;
+
+      logger.info("Streaming agent response completed:", {
+        textLength: fullText.length,
+        citationCount: citations.length,
+        responseTime: `${responseTime}ms`,
+        tokensUsed,
+        hasText: !!fullText,
+      });
+
+      // Call completion callback with final data
+      onComplete({
+        fullText,
+        citations,
+        trace,
+        responseTime,
+        tokensUsed,
+        citationCount: citations.length
+      });
+
+    } catch (error) {
+      logger.error("Error processing streaming agent response:", error);
+      onError(new Error(`Failed to process streaming agent response: ${error.message}`));
     }
   }
 
@@ -1279,6 +1760,7 @@ Please answer the current query while being aware of the conversation context ab
     return {
       sessionId: session.id,
       answer: agentResponse.text || "",
+      answerHTML: agentResponse.html || agentResponse.text || "", // Add HTML version
       citations: agentResponse.citations || [],
       trace: agentResponse.trace,
       analysis: analysis,
@@ -1309,6 +1791,12 @@ Please answer the current query while being aware of the conversation context ab
           topP: inferenceParams.topP,
           model: inferenceParams.model,
           hasSystemPrompt: !!inferenceParams.systemPrompt,
+        },
+        // Add HTML processing metadata
+        htmlFormatting: agentResponse.htmlMetadata || {
+          format: 'text',
+          processingTime: 0,
+          enhanced: false
         },
       },
     };
