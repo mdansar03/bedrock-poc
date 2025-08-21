@@ -1543,7 +1543,6 @@ router.post(
       .withMessage("Action group ID is required"),
   ],
   async (req, res) => {
-    // Only the required fields for enable/disable are sent (see service for details)
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -1561,7 +1560,7 @@ router.post(
 
       res.json({
         success: true,
-        message: "Action group enabled successfully (others disabled)",
+        message: "Action group enabled successfully", // FIXED: Removed misleading message about disabling others
         data: result,
       });
     } catch (error) {
@@ -1587,6 +1586,7 @@ router.post(
     }
   }
 );
+
 
 /**
  * @swagger
@@ -1616,7 +1616,6 @@ router.post(
       .withMessage("Action group ID is required"),
   ],
   async (req, res) => {
-    // Only the required fields for enable/disable are sent (see service for details)
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
