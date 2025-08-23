@@ -255,11 +255,9 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
     
     if (isCurrentlyEnabled) {
       console.log(`Disabling action group: ${actionGroupId}`);
-      // FIXED: Back to using API utility (which now calls correct endpoint)
       response = await actionGroupAPI.disableActionGroup(actionGroupId);
     } else {
       console.log(`Enabling action group: ${actionGroupId}`);
-      // FIXED: Back to using API utility (which now calls correct endpoint)
       response = await actionGroupAPI.enableActionGroup(actionGroupId);
     }
 
@@ -273,11 +271,13 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
       await loadExistingActionGroups();
       
       const action = isCurrentlyEnabled ? "disabled" : "enabled";
+      // FIXED: Updated success messages to reflect correct behavior
       const message = isCurrentlyEnabled 
         ? "Action group disabled successfully" 
-        : "Action group enabled successfully (others disabled)";
+        : "Action group enabled successfully";
       
-      alert(message);
+      // Optional: Show a more informative success message
+      alert(`✅ ${message}\n\nNote: Multiple action groups can be enabled simultaneously for full agent capabilities.`);
     } else {
       throw new Error(response?.error || response?.message || "Unknown error occurred");
     }
@@ -301,7 +301,7 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
       errorMessage += "Unknown error occurred";
     }
     
-    alert(errorMessage);
+    alert(`❌ ${errorMessage}`);
     
     // Refresh the list anyway to get current state
     try {

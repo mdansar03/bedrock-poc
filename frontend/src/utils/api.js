@@ -554,13 +554,13 @@ export const actionGroupAPI = {
     return response.data;
   },
 
-  // FIXED: Enable action group - use correct endpoint
+  // Enable action group - use correct endpoint
   enableActionGroup: async (actionGroupId) => {
     const response = await api.post(`/action-groups/${actionGroupId}/enabled`);
     return response.data;
   },
 
-  // FIXED: Disable action group - use correct endpoint
+  // Disable action group - use correct endpoint
   disableActionGroup: async (actionGroupId) => {
     const response = await api.post(`/action-groups/${actionGroupId}/disabled`);
     return response.data;
