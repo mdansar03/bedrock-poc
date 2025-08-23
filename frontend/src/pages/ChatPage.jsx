@@ -47,11 +47,11 @@ const ChatPage = () => {
   });
   
   // Enhanced agent settings
-  const [useEnhancedAgent, setUseEnhancedAgent] = useState(false);
+  const [useEnhancedAgent, setUseEnhancedAgent] = useState(true);
   const [agentModel, setAgentModel] = useState("anthropic.claude-3-sonnet-20240229-v1:0");
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(0.9);
-  const [systemPrompt, setSystemPrompt] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("You are a helpful AI assistant. Format all responses using proper HTML markup with headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags for technical terms. Structure content clearly with HTML hierarchy for optimal readability.");
   const [historyConfig, setHistoryConfig] = useState({
     enabled: true,
     maxMessages: 6,
@@ -73,6 +73,17 @@ const ChatPage = () => {
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+
+  // Helper function to convert frontend messages to conversation history format
+  const getConversationHistory = () => {
+    return messages
+      .filter(msg => msg.id !== 1) // Exclude the initial greeting message
+      .map(msg => ({
+        role: msg.type === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+        timestamp: msg.timestamp
+      }));
+  };
 
   useEffect(() => {
     scrollToBottom();
@@ -202,9 +213,10 @@ const ChatPage = () => {
           model: agentModel,
           temperature,
           topP,
-          systemPrompt: systemPrompt || null,
+          systemPrompt: systemPrompt.trim() || undefined,
           history: historyConfig,
           dataSources,
+          conversationHistory: getConversationHistory(), // NEW: Pass conversation history
           options: {
             useEnhancement: enhancementOptions.requestElaboration
           }
@@ -234,16 +246,17 @@ const ChatPage = () => {
         }
 
         // Use agent API with data source filtering and latest aliasId
-        response = await agentAPI.sendMessage(
-          userMessage.content,
-          sessionId,
-          {
+        response = await agentAPI.sendMessageWithHistory({
+          message: userMessage.content,
+          sessionId: sessionId,
+          dataSources: Object.keys(dataSources).length > 0 ? dataSources : null,
+          conversationHistory: getConversationHistory(), // NEW: Pass conversation history
+          options: {
             useEnhancement: enhancementOptions.requestElaboration,
             sessionConfig: { preferences: enhancementOptions },
             agentAliasId: latestAliasId, // Pass aliasId to backend
-          },
-          Object.keys(dataSources).length > 0 ? dataSources : null
-        );
+          }
+        });
       } else {
         // Use traditional chat API with agent fallback
         response = await chatAPI.sendMessage(

@@ -47,8 +47,8 @@ class BedrockAgentService {
 
     // Agent configuration
     this.agentId = process.env.BEDROCK_AGENT_ID;
-    this.agentAliasId = process.env.BEDROCK_AGENT_ALIAS_ID || "TSTALIASID"; // Default test alias
     this.knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID;
+    // Note: agentAliasId is now dynamically fetched from action groups API, not from env
 
     // Log configuration for debugging
     logger.debug("Bedrock Agent Service Configuration:", {
@@ -56,14 +56,12 @@ class BedrockAgentService {
       agentId: this.agentId
         ? `${this.agentId.substring(0, 8)}...`
         : "Not configured",
-      agentAliasId: this.agentAliasId,
       hasKnowledgeBaseId: !!this.knowledgeBaseId,
       region: process.env.AWS_REGION || "us-east-1",
+      note: "Agent alias ID is now dynamically fetched from action groups API"
     });
 
-    // Session management
-    this.activeSessions = new Map();
-    this.sessionTimeout = 30 * 60 * 1000; // 30 minutes
+    // Removed session management - now using direct conversation history
 
     // Rate limiting configuration
     this.requestQueue = [];
@@ -73,184 +71,31 @@ class BedrockAgentService {
 
     // Use centralized prompt manager for all instructions
 
-    // Initialize cleanup interval for expired sessions
-    this.initializeSessionCleanup();
+    // Removed session cleanup - now using direct conversation history
   }
+
+  // Removed session cleanup - now using direct conversation history
 
   /**
-   * Initialize session cleanup to remove expired sessions
+   * Generate a session ID if needed (for AWS agent calls)
+   * @param {string} sessionId - Optional session identifier
+   * @returns {string} - Session identifier
    */
-  initializeSessionCleanup() {
-    setInterval(() => {
-      const now = Date.now();
-      for (const [sessionId, session] of this.activeSessions.entries()) {
-        if (now - session.lastActivity > this.sessionTimeout) {
-          this.activeSessions.delete(sessionId);
-          logger.debug(`Cleaned up expired session: ${sessionId}`);
-        }
-      }
-    }, 5 * 60 * 1000); // Check every 5 minutes
+  getSessionId(sessionId) {
+    return sessionId || `session-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
   }
 
-  /**
-   * Get or create a session for conversation continuity
-   * @param {string} sessionId - Session identifier
-   * @param {Object} sessionConfig - Session configuration
-   * @returns {Object} - Session object
-   */
-  getOrCreateSession(sessionId, sessionConfig = {}) {
-    if (!sessionId) {
-      sessionId = `session-${Date.now()}-${Math.random()
-        .toString(36)
-        .substr(2, 9)}`;
-    }
+  // Removed session-based conversation history storage - now using direct history
 
-    if (!this.activeSessions.has(sessionId)) {
-      this.activeSessions.set(sessionId, {
-        id: sessionId,
-        createdAt: Date.now(),
-        lastActivity: Date.now(),
-        messageCount: 0,
-        context: {
-          topics: [],
-          preferences: {},
-          ...sessionConfig,
-        },
-        // Enhanced conversation history storage
-        conversationHistory: [],
-        historyMetadata: {
-          totalMessages: 0,
-          firstMessageAt: Date.now(),
-          lastMessageAt: Date.now(),
-          avgResponseTime: 0,
-          totalTokensUsed: 0,
-        },
-      });
-      logger.debug(`Created new agent session: ${sessionId}`);
-    }
-
-    const session = this.activeSessions.get(sessionId);
-    session.lastActivity = Date.now();
-    return session;
-  }
-
-  /**
-   * Add message to conversation history
-   * @param {string} sessionId - Session identifier
-   * @param {Object} messageData - Message data to store
-   */
-  addToConversationHistory(sessionId, messageData) {
-    const session = this.activeSessions.get(sessionId);
-    if (!session) {
-      logger.warn(
-        `Attempted to add history to non-existent session: ${sessionId}`
-      );
-      return;
-    }
-
-    const historyEntry = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      type: messageData.type, // 'user' or 'assistant'
-      content: messageData.content,
-      metadata: messageData.metadata || {},
-      ...messageData,
-    };
-
-    session.conversationHistory.push(historyEntry);
-    session.historyMetadata.totalMessages++;
-    session.historyMetadata.lastMessageAt = Date.now();
-
-    // Keep only last 50 messages to prevent memory issues
-    if (session.conversationHistory.length > 50) {
-      session.conversationHistory = session.conversationHistory.slice(-50);
-    }
-
-    // Update metadata
-    if (messageData.responseTime) {
-      const currentAvg = session.historyMetadata.avgResponseTime;
-      const count = session.historyMetadata.totalMessages;
-      session.historyMetadata.avgResponseTime =
-        (currentAvg * (count - 1) + messageData.responseTime) / count;
-    }
-
-    if (messageData.tokensUsed) {
-      session.historyMetadata.totalTokensUsed += messageData.tokensUsed;
-    }
-
-    logger.debug(
-      `Added ${messageData.type} message to session ${sessionId} history`
-    );
-  }
-
-  /**
-   * Get conversation history for a session
-   * @param {string} sessionId - Session identifier
-   * @param {Object} options - Retrieval options
-   * @returns {Object} - Conversation history and metadata
-   */
-  getConversationHistory(sessionId, options = {}) {
-    const session = this.activeSessions.get(sessionId);
-    if (!session) {
-      return {
-        history: [],
-        metadata: null,
-        error: "Session not found",
-      };
-    }
-
-    const {
-      limit = 20,
-      includeMetadata = true,
-      messageType = null, // 'user', 'assistant', or null for all
-      fromTimestamp = null,
-      toTimestamp = null,
-    } = options;
-
-    let history = [...session.conversationHistory];
-
-    // Filter by message type if specified
-    if (messageType) {
-      history = history.filter((msg) => msg.type === messageType);
-    }
-
-    // Filter by timestamp range if specified
-    if (fromTimestamp) {
-      history = history.filter(
-        (msg) => new Date(msg.timestamp) >= new Date(fromTimestamp)
-      );
-    }
-    if (toTimestamp) {
-      history = history.filter(
-        (msg) => new Date(msg.timestamp) <= new Date(toTimestamp)
-      );
-    }
-
-    // Apply limit (get most recent messages)
-    history = history.slice(-limit);
-
-    const result = {
-      sessionId: sessionId,
-      history: history,
-      totalMessages: session.conversationHistory.length,
-      filtered: history.length !== session.conversationHistory.length,
-    };
-
-    if (includeMetadata) {
-      result.metadata = {
-        ...session.historyMetadata,
-        sessionAge: Date.now() - session.createdAt,
-        lastActivity: session.lastActivity,
-      };
-    }
-
-    return result;
-  }
+  // Removed session-based conversation history retrieval - now using direct history
 
   /**
    * Build conversation context for agent prompt enhancement
-   * @param {string} sessionId - Session identifier
+   * @param {string|null} sessionId - Session identifier (can be null when using direct history)
    * @param {Object} options - Context building options
+   * @param {Array} options.directHistory - Direct conversation history array (alternative to session-based)
    * @returns {string} - Formatted conversation context
    */
   buildConversationContext(sessionId, options = {}) {
@@ -259,33 +104,45 @@ class BedrockAgentService {
       includeTimestamps = false,
       prioritizeRecent = true,
       contextWeight = "balanced", // 'light', 'balanced', 'heavy'
+      directHistory = null, // NEW: Direct conversation history array
     } = options;
 
-    const historyData = this.getConversationHistory(sessionId, {
-      limit: maxMessages,
-      includeMetadata: true,
-    });
+    let historyMessages = [];
 
-    if (!historyData.history || historyData.history.length === 0) {
+    // Use direct history if provided, otherwise fall back to session-based history
+    if (directHistory && Array.isArray(directHistory) && directHistory.length > 0) {
+      // Process direct history payload
+      historyMessages = directHistory
+        .slice(-maxMessages) // Take only the most recent messages up to maxMessages
+        .map(msg => ({
+          id: `direct-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          timestamp: msg.timestamp || new Date().toISOString(),
+          type: msg.role === 'user' ? 'user' : 'assistant',
+          content: msg.content,
+          metadata: msg.metadata || {}
+        }));
+
+      logger.info(`Using direct conversation history: ${historyMessages.length} messages`);
+    } else {
+      // No direct history provided
+      logger.info("No conversation history available");
+    }
+
+    // If no history available, return null
+    if (historyMessages.length === 0) {
+      logger.info("No conversation history available");
       return null;
     }
 
     let contextLines = [];
 
-    // Add session context summary
-    if (contextWeight !== "light") {
-      const topics =
-        this.activeSessions.get(sessionId)?.context?.topics?.slice(-3) || [];
-      if (topics.length > 0) {
-        contextLines.push(`Previous conversation topics: ${topics.join(", ")}`);
-      }
-    }
+    // Session context summary has been removed - using direct history only
 
     // Format conversation history
     contextLines.push("\nRecent conversation history:");
 
-    historyData.history.forEach((msg, index) => {
-      const isRecent = index >= historyData.history.length - 2; // Last 2 messages
+    historyMessages.forEach((msg, index) => {
+      const isRecent = index >= historyMessages.length - 2; // Last 2 messages
       const weight = prioritizeRecent && isRecent ? "[RECENT] " : "";
       const timestamp = includeTimestamps
         ? `[${new Date(msg.timestamp).toLocaleTimeString()}] `
@@ -300,6 +157,7 @@ class BedrockAgentService {
       contextLines.push(`${weight}${timestamp}${role}: ${content}`);
     });
 
+    logger.info(`Built conversation context with ${historyMessages.length} messages`);
     return contextLines.join("\n");
   }
 
@@ -444,7 +302,7 @@ class BedrockAgentService {
     }
 
     // Add HTML formatting instruction to all enhancements
-    enhancement += `\n\nIMPORTANT: Format your response using proper HTML markup for better readability. Use headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags where appropriate. Structure the content with clear HTML hierarchy.`;
+    enhancement += `\n\nIMPORTANT: Format your response using proper HTML markup for better readability. `;
 
     return enhancement;
   }
@@ -526,25 +384,11 @@ Do NOT use information from any other data sources not explicitly listed above.`
 
       const startTime = Date.now();
 
-      // Get or create session
-      const session = this.getOrCreateSession(sessionId, options.sessionConfig);
+      // Generate session ID if needed
+      const actualSessionId = this.getSessionId(sessionId);
 
-      // Store user message in conversation history
-      this.addToConversationHistory(session.id, {
-        type: "user",
-        content: query,
-        metadata: {
-          hasDataSourceFilters: !!options.dataSources,
-          hasCustomModel: !!options.model,
-          hasSystemPrompt: !!options.systemPrompt,
-          temperature: options.temperature,
-          topP: options.topP,
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      // Analyze query and determine approach
-      const analysis = this.analyzeQuery(query, session.context);
+      // Analyze query and determine approach (no session context needed)
+      const analysis = this.analyzeQuery(query, {});
 
       // Build conversation context if enabled
       const historyOptions = {
@@ -555,21 +399,28 @@ Do NOT use information from any other data sources not explicitly listed above.`
       };
 
       let conversationContext = null;
-      if (historyOptions.enabled && session.conversationHistory.length > 1) {
-        conversationContext = this.buildConversationContext(session.id, {
-          maxMessages: historyOptions.maxMessages,
-          contextWeight: historyOptions.contextWeight,
-          prioritizeRecent: true,
-        });
+      if (historyOptions.enabled) {
+        // Use direct conversation history if provided
+        const shouldUseHistory = options.conversationHistory && 
+          Array.isArray(options.conversationHistory) && 
+          options.conversationHistory.length > 0;
+          
+        if (shouldUseHistory) {
+          conversationContext = this.buildConversationContext(actualSessionId, {
+            maxMessages: historyOptions.maxMessages,
+            contextWeight: historyOptions.contextWeight,
+            prioritizeRecent: true,
+            directHistory: options.conversationHistory,
+          });
+        }
       }
 
       logger.info(`Invoking Bedrock Agent for query analysis:`, {
-        sessionId: session.id,
+        sessionId: actualSessionId,
         queryLength: query.length,
         interactionStyle: analysis.interactionStyle,
         confidence: analysis.confidence,
-        messageCount: session.messageCount,
-        conversationHistoryLength: session.conversationHistory.length,
+        conversationHistoryLength: options.conversationHistory?.length || 0,
         hasConversationContext: !!conversationContext,
         hasDataSourceFilters: !!options.dataSources,
         hasCustomModel: !!options.model,
@@ -595,10 +446,10 @@ Please answer the current query while being aware of the conversation context ab
       }
 
       // Apply system prompt if provided
-      if (options.systemPrompt) {
-        enhancedQuery = `${options.systemPrompt}\n\nUser Query: ${enhancedQuery}`;
-        logger.info("Applied custom system prompt to query");
-      }
+      // if (options.systemPrompt) {
+      //   enhancedQuery = `${options.systemPrompt}\n\nUser Query: ${enhancedQuery}`;
+      //   logger.info("Applied custom system prompt to query");
+      // }
 
       if (options.dataSources) {
         enhancedQuery = this.applyDataSourceFiltering(
@@ -608,11 +459,16 @@ Please answer the current query while being aware of the conversation context ab
         logger.info("Applied data source filtering to query");
       }
 
+      // Validate that agentAliasId is provided in options
+      if (!options.agentAliasId) {
+        throw new Error('agentAliasId is required but not provided in options. Please ensure the latest alias is fetched before invoking the agent.');
+      }
+
       // Prepare agent invocation parameters
       const agentParams = {
         agentId: this.agentId,
-        agentAliasId: options.agentAliasId || this.agentAliasId, // Use provided aliasId if present
-        sessionId: session.id,
+        agentAliasId: options.agentAliasId, // Use the dynamically provided aliasId
+        sessionId: actualSessionId,
         inputText: enhancedQuery,
         // Enable trace for debugging (optional)
         enableTrace: process.env.NODE_ENV === "development",
@@ -650,8 +506,8 @@ Please answer the current query while being aware of the conversation context ab
 
       logger.debug("Agent invocation parameters:", {
         agentId: this.agentId,
-        agentAliasId: this.agentAliasId,
-        sessionId: session.id,
+        agentAliasId: options.agentAliasId,
+        sessionId: actualSessionId,
         queryPreview: enhancedQuery.substring(0, 150) + "...",
         enableTrace: agentParams.enableTrace,
         filtersApplied: !!options.dataSources,
@@ -664,6 +520,8 @@ Please answer the current query while being aware of the conversation context ab
 
       // Create the invoke agent command
       const command = new InvokeAgentCommand(agentParams);
+
+      console.log(command, "Command ===================>");
 
       // Add to rate limiting queue
       const response = await this.executeWithRateLimit(async () => {
@@ -692,7 +550,7 @@ Please answer the current query while being aware of the conversation context ab
             "Alternative processing successful, using alternative response"
           );
           return this.buildFinalResponse(
-            session,
+            actualSessionId,
             alternativeResponse,
             analysis,
             options.dataSources,
@@ -701,6 +559,7 @@ Please answer the current query while being aware of the conversation context ab
               topP: options.topP,
               model: options.model,
               systemPrompt: options.systemPrompt,
+              agentAliasId: options.agentAliasId,
             }
           );
         } else {
@@ -716,7 +575,7 @@ Please answer the current query while being aware of the conversation context ab
             tokensUsed: 0,
           };
           return this.buildFinalResponse(
-            session,
+            actualSessionId,
             fallbackResponse,
             analysis,
             options.dataSources,
@@ -725,13 +584,14 @@ Please answer the current query while being aware of the conversation context ab
               topP: options.topP,
               model: options.model,
               systemPrompt: options.systemPrompt,
+              agentAliasId: options.agentAliasId,
             }
           );
         }
       }
 
       logger.info("Agent response processed successfully:", {
-        sessionId: session.id,
+        sessionId: actualSessionId,
         responseLength: agentResponse.text?.length || 0,
         citationCount: agentResponse.citations?.length || 0,
         traceAvailable: !!agentResponse.trace,
@@ -741,29 +601,10 @@ Please answer the current query while being aware of the conversation context ab
 
       const responseTime = Date.now() - startTime;
 
-      // Store assistant response in conversation history
-      this.addToConversationHistory(session.id, {
-        type: "assistant",
-        content: agentResponse.text || "",
-        responseTime: responseTime,
-        tokensUsed: agentResponse.tokensUsed || 0,
-        metadata: {
-          citationCount: agentResponse.citations?.length || 0,
-          hasTrace: !!agentResponse.trace,
-          filtersApplied: !!options.dataSources,
-          conversationContextUsed: !!conversationContext,
-          inferenceParams: {
-            temperature: options.temperature,
-            topP: options.topP,
-            model: options.model,
-            hasSystemPrompt: !!options.systemPrompt,
-          },
-          timestamp: new Date().toISOString(),
-        },
-      });
+      // Session-based storage removed - conversation history now managed by frontend
 
       return this.buildFinalResponse(
-        session,
+        actualSessionId,
         agentResponse,
         analysis,
         options.dataSources,
@@ -772,6 +613,7 @@ Please answer the current query while being aware of the conversation context ab
           topP: options.topP,
           model: options.model,
           systemPrompt: options.systemPrompt,
+          agentAliasId: options.agentAliasId,
           conversationContextUsed: !!conversationContext,
           historyOptions: historyOptions,
         }
@@ -1070,28 +912,14 @@ Please answer the current query while being aware of the conversation context ab
   }
 
   /**
-   * Get active sessions summary
-   * @returns {Object} - Sessions summary
+   * Get service summary (sessions removed, now just service status)
+   * @returns {Object} - Service summary
    */
-  getSessionsSummary() {
-    const sessions = Array.from(this.activeSessions.values());
-    const now = Date.now();
-
+  getServiceSummary() {
     return {
-      totalSessions: sessions.length,
-      activeSessions: sessions.filter(
-        (s) => now - s.lastActivity < 5 * 60 * 1000
-      ).length, // Active in last 5 minutes
-      oldestSession:
-        sessions.length > 0
-          ? Math.min(...sessions.map((s) => s.createdAt))
-          : null,
-      averageMessages:
-        sessions.length > 0
-          ? sessions.reduce((sum, s) => sum + s.messageCount, 0) /
-            sessions.length
-          : 0,
-      sessionTimeout: this.sessionTimeout,
+      // Session tracking removed - using direct conversation history
+      totalSessions: 0,
+      activeSessions: 0,
       rateLimitConfig: {
         maxConcurrent: this.maxConcurrentRequests,
         activeRequests: this.activeRequests,
@@ -1108,14 +936,14 @@ Please answer the current query while being aware of the conversation context ab
   async healthCheck() {
     try {
       const agentInfo = await this.getAgentInfo();
-      const sessionsSummary = this.getSessionsSummary();
+      const serviceSummary = this.getServiceSummary();
 
       const isHealthy = agentInfo.configured && agentInfo.status === "PREPARED";
 
       return {
         healthy: isHealthy,
         agent: agentInfo,
-        sessions: sessionsSummary,
+        service: serviceSummary,
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
@@ -1306,26 +1134,11 @@ Please answer the current query while being aware of the conversation context ab
         onError = () => {}
       } = streamCallbacks;
 
-      // Get or create session
-      const session = this.getOrCreateSession(sessionId, options.sessionConfig);
+      // Generate session ID if needed
+      const actualSessionId = this.getSessionId(sessionId);
 
-      // Store user message in conversation history
-      this.addToConversationHistory(session.id, {
-        type: "user",
-        content: query,
-        metadata: {
-          hasDataSourceFilters: !!options.dataSources,
-          hasCustomModel: !!options.model,
-          hasSystemPrompt: !!options.systemPrompt,
-          temperature: options.temperature,
-          topP: options.topP,
-          timestamp: new Date().toISOString(),
-          streaming: true,
-        },
-      });
-
-      // Analyze query and determine approach
-      const analysis = this.analyzeQuery(query, session.context);
+      // Analyze query and determine approach (no session context needed)
+      const analysis = this.analyzeQuery(query, {});
 
       // Build conversation context if enabled
       const historyOptions = {
@@ -1336,21 +1149,28 @@ Please answer the current query while being aware of the conversation context ab
       };
 
       let conversationContext = null;
-      if (historyOptions.enabled && session.conversationHistory.length > 1) {
-        conversationContext = this.buildConversationContext(session.id, {
-          maxMessages: historyOptions.maxMessages,
-          contextWeight: historyOptions.contextWeight,
-          prioritizeRecent: true,
-        });
+      if (historyOptions.enabled) {
+        // Use direct conversation history if provided
+        const shouldUseHistory = options.conversationHistory && 
+          Array.isArray(options.conversationHistory) && 
+          options.conversationHistory.length > 0;
+          
+        if (shouldUseHistory) {
+          conversationContext = this.buildConversationContext(actualSessionId, {
+            maxMessages: historyOptions.maxMessages,
+            contextWeight: historyOptions.contextWeight,
+            prioritizeRecent: true,
+            directHistory: options.conversationHistory,
+          });
+        }
       }
 
       logger.info(`Invoking Streaming Bedrock Agent for query analysis:`, {
-        sessionId: session.id,
+        sessionId: actualSessionId,
         queryLength: query.length,
         interactionStyle: analysis.interactionStyle,
         confidence: analysis.confidence,
-        messageCount: session.messageCount,
-        conversationHistoryLength: session.conversationHistory.length,
+        conversationHistoryLength: options.conversationHistory?.length || 0,
         hasConversationContext: !!conversationContext,
         hasDataSourceFilters: !!options.dataSources,
         streaming: true,
@@ -1385,11 +1205,16 @@ Please answer the current query while being aware of the conversation context ab
         logger.info("Applied data source filtering to streaming query");
       }
 
+      // Validate that agentAliasId is provided in options for streaming
+      if (!options.agentAliasId) {
+        throw new Error('agentAliasId is required but not provided in options for streaming. Please ensure the latest alias is fetched before invoking the agent.');
+      }
+
       // Prepare agent invocation parameters with TRUE streaming enabled
       const agentParams = {
         agentId: this.agentId,
-        agentAliasId: options.agentAliasId || this.agentAliasId,
-        sessionId: session.id,
+        agentAliasId: options.agentAliasId, // Use the dynamically provided aliasId
+        sessionId: actualSessionId,
         inputText: enhancedQuery,
         enableTrace: process.env.NODE_ENV === "development",
         sessionState: options.sessionState || {},
@@ -1421,8 +1246,8 @@ Please answer the current query while being aware of the conversation context ab
 
       logger.info("🚀 STREAMING AGENT INVOCATION with streamingConfigurations", {
         agentId: this.agentId,
-        agentAliasId: this.agentAliasId,
-        sessionId: session.id,
+        agentAliasId: options.agentAliasId,
+        sessionId: actualSessionId,
         queryPreview: enhancedQuery.substring(0, 150) + "...",
         enableTrace: agentParams.enableTrace,
         streamingConfigurations: agentParams.streamingConfigurations,
@@ -1444,39 +1269,10 @@ Please answer the current query while being aware of the conversation context ab
           onComplete: (finalData) => {
             const totalTime = Date.now() - startTime;
             
-            // Store assistant response in conversation history
-            this.addToConversationHistory(session.id, {
-              type: "assistant",
-              content: finalData.fullText || "",
-              responseTime: totalTime,
-              tokensUsed: finalData.tokensUsed || 0,
-              metadata: {
-                citationCount: finalData.citationCount || 0,
-                hasTrace: !!finalData.trace,
-                filtersApplied: !!options.dataSources,
-                conversationContextUsed: !!conversationContext,
-                streaming: true,
-                inferenceParams: {
-                  temperature: options.temperature,
-                  topP: options.topP,
-                  model: options.model,
-                  hasSystemPrompt: !!options.systemPrompt,
-                },
-                timestamp: new Date().toISOString(),
-              },
-            });
-
-            // Update session context
-            session.messageCount++;
-            session.context.topics.push(
-              this.extractTopicFromQuery(analysis.originalQuery)
-            );
-            if (session.context.topics.length > 10) {
-              session.context.topics = session.context.topics.slice(-10);
-            }
+            // Session-based storage removed - conversation history now managed by frontend
 
             onComplete({
-              sessionId: session.id,
+              sessionId: actualSessionId,
               totalTime: `${totalTime}ms`,
               tokensUsed: finalData.tokensUsed || 0,
               citationCount: finalData.citationCount || 0,
@@ -1728,7 +1524,7 @@ Please answer the current query while being aware of the conversation context ab
 
   /**
    * Build final response object
-   * @param {Object} session - Session object
+   * @param {string} sessionId - Session identifier
    * @param {Object} agentResponse - Processed agent response
    * @param {Object} analysis - Query analysis
    * @param {Object} dataSources - Data sources used for filtering (if any)
@@ -1736,49 +1532,31 @@ Please answer the current query while being aware of the conversation context ab
    * @returns {Object} - Final response
    */
   buildFinalResponse(
-    session,
+    sessionId,
     agentResponse,
     analysis,
     dataSources,
     inferenceParams = {}
   ) {
-    // Update session context
-    session.messageCount++;
-    session.context.topics.push(
-      this.extractTopicFromQuery(analysis.originalQuery)
-    );
-    if (session.context.topics.length > 10) {
-      session.context.topics = session.context.topics.slice(-10);
-    }
-
-    // Get current conversation history for response
-    const currentHistory = this.getConversationHistory(session.id, {
-      limit: 10,
-      includeMetadata: false,
-    });
+    // Session context tracking removed - now using direct conversation history
 
     return {
-      sessionId: session.id,
+      sessionId: sessionId,
       answer: agentResponse.text || "",
       answerHTML: agentResponse.html || agentResponse.text || "", // Add HTML version
       citations: agentResponse.citations || [],
       trace: agentResponse.trace,
       analysis: analysis,
       session: {
-        messageCount: session.messageCount,
-        topics: session.context.topics,
         interactionStyle: analysis.interactionStyle,
-        // Enhanced session information with conversation history
+        // Session information simplified - no server-side session tracking
         conversationHistory: {
-          totalMessages: currentHistory.totalMessages,
-          recentMessages: currentHistory.history?.slice(-4) || [], // Last 4 messages
-          sessionAge: Date.now() - session.createdAt,
-          avgResponseTime: session.historyMetadata?.avgResponseTime || 0,
+          // Frontend manages conversation history now
         },
       },
       metadata: {
         agentId: this.agentId,
-        agentAliasId: this.agentAliasId,
+        agentAliasId: inferenceParams.agentAliasId || 'unknown', // Use the alias from inference params
         responseTime: agentResponse.responseTime,
         tokensUsed: agentResponse.tokensUsed,
         timestamp: new Date().toISOString(),

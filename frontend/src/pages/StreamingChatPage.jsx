@@ -45,6 +45,16 @@ const StreamingChatPage = () => {
     systemPrompt: "You are a helpful AI assistant. Format your responses using proper HTML markup with headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags for technical terms. Structure content clearly with HTML hierarchy for optimal readability.",
   });
   
+  // History configuration
+  const [historyConfig, setHistoryConfig] = useState({
+    enabled: true,
+    maxMessages: 6,
+    contextWeight: "balanced"
+  });
+
+  // Enhanced Agent Mode - enabled by default
+  const [useEnhancedAgent, setUseEnhancedAgent] = useState(true);
+  
   const [selectedDataSources, setSelectedDataSources] = useState({
     websites: [],
     pdfs: [],
@@ -72,6 +82,17 @@ const StreamingChatPage = () => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const eventSourceRef = useRef(null);
+
+  // Helper function to convert frontend messages to conversation history format
+  const getConversationHistory = () => {
+    return messages
+      .filter(msg => msg.id !== 1 && !msg.isStreaming) // Exclude initial greeting and streaming messages
+      .map(msg => ({
+        role: msg.type === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+        timestamp: msg.timestamp
+      }));
+  };
 
   useEffect(() => {
     scrollToBottom();
@@ -146,10 +167,12 @@ const StreamingChatPage = () => {
             model: streamingSettings.model,
             temperature: streamingSettings.temperature,
             topP: streamingSettings.topP,
-            systemPrompt: streamingSettings.systemPrompt,
+            systemPrompt: streamingSettings.systemPrompt?.trim() || undefined,
+            history: historyConfig,
+            conversationHistory: getConversationHistory(), // NEW: Pass conversation history to streaming
             dataSources: selectedDataSources,
             options: {
-              useEnhancement: true,
+              useEnhancement: useEnhancedAgent,
             }
           };
           break;
@@ -692,6 +715,74 @@ const StreamingChatPage = () => {
                   Define the AI's behavior and formatting preferences
                 </p>
               </div>
+
+              {/* History Configuration */}
+              {streamingMode === "agent" && (
+                <div className="space-y-2">
+                  <h5 className="text-sm font-medium text-gray-700">Conversation History</h5>
+                  
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={historyConfig.enabled}
+                      onChange={(e) => setHistoryConfig(prev => ({ ...prev, enabled: e.target.checked }))}
+                      className="mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                    />
+                    <span className="text-sm">Enable conversation history</span>
+                  </label>
+
+                  {historyConfig.enabled && (
+                    <div className="ml-6 space-y-2">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">
+                          Max Messages: {historyConfig.maxMessages}
+                        </label>
+                        <input
+                          type="range"
+                          min="1"
+                          max="20"
+                          value={historyConfig.maxMessages}
+                          onChange={(e) => setHistoryConfig(prev => ({ ...prev, maxMessages: parseInt(e.target.value) }))}
+                          className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Context Weight</label>
+                        <select
+                          value={historyConfig.contextWeight}
+                          onChange={(e) => setHistoryConfig(prev => ({ ...prev, contextWeight: e.target.value }))}
+                          className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-purple-500"
+                        >
+                          <option value="light">Light</option>
+                          <option value="balanced">Balanced</option>
+                          <option value="heavy">Heavy</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Enhanced Agent Mode Toggle */}
+              {streamingMode === "agent" && (
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={useEnhancedAgent}
+                      onChange={(e) => setUseEnhancedAgent(e.target.checked)}
+                      className="mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                    />
+                    <span className="text-sm font-medium text-purple-800">
+                      🚀 Use Enhanced Agent Mode
+                    </span>
+                  </label>
+                  <p className="text-xs text-purple-600 ml-6">
+                    Advanced agent with comprehensive parameter support (enabled by default)
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -910,11 +1001,22 @@ const StreamingChatPage = () => {
 
           <div className="mt-2 flex justify-between text-xs text-gray-500">
             <span>
-              Mode: {streamingMode} | Session: {sessionId || "New"}
+              Mode: {streamingMode}{streamingMode === "agent" && useEnhancedAgent && " (Enhanced)"} | Session: {sessionId || "New"}
             </span>
-            <span>
-              Model: {availableModels.find(m => m.id === streamingSettings.model)?.name || "Default"}
-            </span>
+            <div className="flex items-center space-x-4">
+              <span>
+                Model: {availableModels.find(m => m.id === streamingSettings.model)?.name || "Default"}
+              </span>
+              {streamingMode === "agent" && (
+                <>
+                  <span>Temp: {streamingSettings.temperature}</span>
+                  <span>TopP: {streamingSettings.topP}</span>
+                  {historyConfig.enabled && (
+                    <span>History: {historyConfig.maxMessages} msgs ({historyConfig.contextWeight})</span>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>

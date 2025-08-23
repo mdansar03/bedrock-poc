@@ -2,6 +2,7 @@ const express = require('express');
 const { body, validationResult, query } = require('express-validator');
 const bedrockAgentService = require('../services/bedrockAgentService');
 const agentSetupUtility = require('../utils/agentSetup');
+const actionGroupService = require('../services/actionGroupService');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -170,22 +171,48 @@ router.post('/', [
     .isObject()
     .withMessage('Session config must be an object'),
   body('model')
-    .optional()
-    .isString()
-    .withMessage('Model must be a string'),
+    .custom((value) => {
+      // Allow null, undefined, or string values
+      if (value === null || value === undefined || typeof value === 'string') {
+        return true;
+      }
+      throw new Error('Model must be a string or null');
+    }),
   body('temperature')
-    .optional()
-    .isFloat({ min: 0.0, max: 1.0 })
-    .withMessage('Temperature must be a number between 0.0 and 1.0'),
+    .custom((value) => {
+      // Allow null, undefined, or valid float values
+      if (value === null || value === undefined) {
+        return true;
+      }
+      if (typeof value === 'number' && value >= 0.0 && value <= 1.0) {
+        return true;
+      }
+      throw new Error('Temperature must be a number between 0.0 and 1.0 or null');
+    }),
   body('topP')
-    .optional()
-    .isFloat({ min: 0.0, max: 1.0 })
-    .withMessage('Top P must be a number between 0.0 and 1.0'),
+    .custom((value) => {
+      // Allow null, undefined, or valid float values
+      if (value === null || value === undefined) {
+        return true;
+      }
+      if (typeof value === 'number' && value >= 0.0 && value <= 1.0) {
+        return true;
+      }
+      throw new Error('Top P must be a number between 0.0 and 1.0 or null');
+    }),
   body('systemPrompt')
     .optional()
-    .isString()
-    .isLength({ min: 1, max: 4000 })
-    .withMessage('System prompt must be between 1 and 4000 characters'),
+    .custom((value) => {
+      // Allow null, undefined, or empty string to be treated as "no system prompt"
+      if (value === null || value === undefined || value === '') {
+        return true;
+      }
+      // If a value is provided, it must be a string between 1 and 4000 characters
+      if (typeof value === 'string' && value.length >= 1 && value.length <= 40000) {
+        return true;
+      }
+      throw new Error('System prompt must be between 1 and 40000 characters');
+    }),
   body('history.enabled')
     .optional()
     .isBoolean()
@@ -197,7 +224,23 @@ router.post('/', [
   body('history.contextWeight')
     .optional()
     .isIn(['light', 'balanced', 'heavy'])
-    .withMessage('History contextWeight must be light, balanced, or heavy')
+    .withMessage('History contextWeight must be light, balanced, or heavy'),
+  body('conversationHistory')
+    .optional()
+    .isArray()
+    .withMessage('Conversation history must be an array'),
+  body('conversationHistory.*.role')
+    .optional()
+    .isIn(['user', 'assistant'])
+    .withMessage('Each history message role must be either user or assistant'),
+  body('conversationHistory.*.content')
+    .optional()
+    .isString()
+    .withMessage('Each history message content must be between 1 and 4000 characters'),
+  body('conversationHistory.*.timestamp')
+    .optional()
+    .isISO8601()
+    .withMessage('Each history message timestamp must be a valid ISO 8601 date')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -219,7 +262,8 @@ router.post('/', [
       temperature = null,
       topP = null,
       systemPrompt = null,
-      history = {}
+      history = {},
+      conversationHistory = null
     } = req.body;
 
     logger.info(`Received agent query: ${message.substring(0, 100)}...`);
@@ -253,6 +297,18 @@ router.post('/', [
         contextWeight: history.contextWeight || 'balanced'
       });
     }
+    
+    // Log conversation history payload if provided
+    if (conversationHistory && Array.isArray(conversationHistory)) {
+      logger.info('Direct conversation history provided:', {
+        messageCount: conversationHistory.length,
+        messages: conversationHistory.map(msg => ({
+          role: msg.role,
+          contentLength: msg.content?.length || 0,
+          timestamp: msg.timestamp
+        }))
+      });
+    }
 
     // Log data source filtering if provided
     if (dataSources) {
@@ -263,7 +319,7 @@ router.post('/', [
       });
     }
 
-    // Enhanced options to include data source filtering, inference parameters, and history settings
+    // Enhanced options to include data source filtering, inference parameters, history settings, and conversation history
     const enhancedOptions = {
       ...options,
       dataSources: dataSources,
@@ -271,6 +327,7 @@ router.post('/', [
       temperature: temperature,
       topP: topP,
       systemPrompt: systemPrompt,
+      conversationHistory: conversationHistory, // NEW: Pass direct conversation history
       history: {
         enabled: history.enabled !== false, // Default to true
         maxMessages: history.maxMessages || 6,
@@ -278,6 +335,29 @@ router.post('/', [
         ...history
       }
     };
+
+    console.log(enhancedOptions, "Enhanced Options ===================>");
+
+    // Fetch the latest agent alias ID from action groups
+    let latestAlias;
+    try {
+      latestAlias = await actionGroupService.getLatestAgentAlias();
+      if (!latestAlias || !latestAlias.aliasId) {
+        throw new Error('No latest alias found or aliasId missing');
+      }
+      logger.info(`Using latest agent alias: ${latestAlias.aliasId} (${latestAlias.aliasName || 'Unnamed'})`);
+    } catch (aliasError) {
+      logger.error('Failed to fetch latest agent alias:', aliasError);
+      return res.status(503).json({
+        success: false,
+        error: 'Service configuration error',
+        message: 'Unable to fetch the latest agent alias. Please check action group configuration.',
+        setupRequired: true
+      });
+    }
+
+    // Add the fetched alias ID to enhanced options
+    enhancedOptions.agentAliasId = latestAlias.aliasId;
 
     // Invoke the Bedrock Agent with enhanced options
     const response = await bedrockAgentService.invokeAgent(message, sessionId, enhancedOptions);
@@ -438,13 +518,13 @@ router.post('/', [
 router.get('/info', async (req, res) => {
   try {
     const agentInfo = await bedrockAgentService.getAgentInfo();
-    const sessionsSummary = bedrockAgentService.getSessionsSummary();
+    const serviceSummary = bedrockAgentService.getServiceSummary();
     
     res.json({
       success: true,
       data: {
         agent: agentInfo,
-        sessions: sessionsSummary,
+        service: serviceSummary,
         timestamp: new Date().toISOString()
       }
     });
@@ -725,123 +805,7 @@ router.put('/:agentId', [
   }
 });
 
-/**
- * Get conversation history for a session
- * GET /api/chat/agent/history/:sessionId
- */
-router.get('/history/:sessionId', [
-  query('limit')
-    .optional()
-    .isInt({ min: 1, max: 50 })
-    .withMessage('Limit must be between 1 and 50'),
-  query('messageType')
-    .optional()
-    .isIn(['user', 'assistant'])
-    .withMessage('Message type must be user or assistant'),
-  query('includeMetadata')
-    .optional()
-    .isBoolean()
-    .withMessage('Include metadata must be a boolean')
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors.array()
-      });
-    }
-
-    const { sessionId } = req.params;
-    const { 
-      limit = 20, 
-      messageType = null, 
-      includeMetadata = true,
-      fromTimestamp = null,
-      toTimestamp = null
-    } = req.query;
-
-    const historyData = bedrockAgentService.getConversationHistory(sessionId, {
-      limit: parseInt(limit),
-      messageType,
-      includeMetadata: includeMetadata === 'true',
-      fromTimestamp,
-      toTimestamp
-    });
-
-    if (historyData.error) {
-      return res.status(404).json({
-        success: false,
-        error: historyData.error,
-        message: `Session ${sessionId} not found`
-      });
-    }
-
-    res.json({
-      success: true,
-      data: historyData
-    });
-
-  } catch (error) {
-    logger.error('Error retrieving conversation history:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to retrieve conversation history',
-      message: error.message
-    });
-  }
-});
-
-/**
- * Clear conversation history for a session
- * DELETE /api/chat/agent/history/:sessionId
- */
-router.delete('/history/:sessionId', async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    
-    const session = bedrockAgentService.activeSessions.get(sessionId);
-    if (!session) {
-      return res.status(404).json({
-        success: false,
-        error: 'Session not found',
-        message: `Session ${sessionId} not found`
-      });
-    }
-
-    // Clear conversation history but keep session metadata
-    session.conversationHistory = [];
-    session.historyMetadata = {
-      totalMessages: 0,
-      firstMessageAt: Date.now(),
-      lastMessageAt: Date.now(),
-      avgResponseTime: 0,
-      totalTokensUsed: 0
-    };
-    session.messageCount = 0;
-    session.context.topics = [];
-
-    logger.info(`Cleared conversation history for session: ${sessionId}`);
-
-    res.json({
-      success: true,
-      message: 'Conversation history cleared successfully',
-      data: {
-        sessionId,
-        clearedAt: new Date().toISOString()
-      }
-    });
-
-  } catch (error) {
-    logger.error('Error clearing conversation history:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to clear conversation history',
-      message: error.message
-    });
-  }
-});
+// History-related endpoints removed - now using direct conversation history payload
 
 /**
  * Get all active sessions with their metadata
@@ -939,7 +903,6 @@ router.get('/verify', (req, res) => {
       AWS_ACCESS_KEY_ID: !!process.env.AWS_ACCESS_KEY_ID,
       AWS_SECRET_ACCESS_KEY: !!process.env.AWS_SECRET_ACCESS_KEY,
       BEDROCK_AGENT_ID: !!process.env.BEDROCK_AGENT_ID,
-      BEDROCK_AGENT_ALIAS_ID: !!process.env.BEDROCK_AGENT_ALIAS_ID,
       BEDROCK_KNOWLEDGE_BASE_ID: !!process.env.BEDROCK_KNOWLEDGE_BASE_ID
     };
 
@@ -947,23 +910,22 @@ router.get('/verify', (req, res) => {
       .filter(([key, hasValue]) => !hasValue)
       .map(([key]) => key);
 
-    const isConfigured = missingEnvVars.length === 0 || 
-                        (missingEnvVars.length === 1 && missingEnvVars[0] === 'BEDROCK_AGENT_ALIAS_ID');
+    const isConfigured = missingEnvVars.length === 0;
 
     res.json({
       success: true,
       data: {
         configured: isConfigured,
         environmentVariables: envCheck,
-        missingRequired: missingEnvVars.filter(key => key !== 'BEDROCK_AGENT_ALIAS_ID'),
+        missingRequired: missingEnvVars,
         agentValues: {
           agentId: process.env.BEDROCK_AGENT_ID ? `${process.env.BEDROCK_AGENT_ID.substring(0, 8)}...` : null,
-          agentAliasId: process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID (default)',
+          agentAliasId: 'Dynamically fetched from action groups API',
           knowledgeBaseId: process.env.BEDROCK_KNOWLEDGE_BASE_ID ? `${process.env.BEDROCK_KNOWLEDGE_BASE_ID.substring(0, 8)}...` : null,
           region: process.env.AWS_REGION || 'us-east-1 (default)'
         },
         recommendations: isConfigured 
-          ? ['Configuration looks good! Try testing the agent.']
+          ? ['Configuration looks good! Agent alias is dynamically fetched from action groups. Try testing the agent.']
           : ['Please set the missing environment variables and restart the server.']
       }
     });

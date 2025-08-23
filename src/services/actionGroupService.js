@@ -305,7 +305,8 @@ Current error: ${error.message}`);
         Variables: {
           API_BASE_URL: apiConfig.baseUrl,
           API_NAME: apiConfig.apiName,
-          API_CONFIG: JSON.stringify(apiConfig),
+          NODE_ENV: 'production'
+          // Removed API_CONFIG - it's embedded in the function code to avoid 4KB env var limit
         },
       },
       Tags: {
@@ -375,6 +376,13 @@ Current error: ${error.message}`);
    * @returns {Object} IAM role
    */
   async createLambdaExecutionRole(roleName) {
+    // Ensure role name doesn't exceed AWS 64-character limit
+    if (roleName.length > 64) {
+      const maxBaseLength = 64 - '-execution-role'.length; // 49 chars max for base name
+      const baseName = roleName.replace('-execution-role', '').substring(0, maxBaseLength);
+      roleName = `${baseName}-execution-role`;
+      logger.warn(`Role name truncated to fit AWS limit: ${roleName}`);
+    }
     try {
       // Check if role exists
       const getCommand = new GetRoleCommand({ RoleName: roleName });
@@ -820,7 +828,24 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
       .replace(/_{2,}/g, "_")
       .toLowerCase();
 
-    return `oralia-action-group-${normalized}`;
+    // Ensure function name + role suffix fits within AWS limits
+    // Max function name length to allow for "-execution-role" suffix in IAM role (64 char limit)
+    const maxFunctionNameLength = 64 - '-execution-role'.length; // 49 characters
+    const prefix = 'oralia-ag-'; // Shortened prefix (10 chars vs 21 chars)
+    const maxApiNameLength = maxFunctionNameLength - prefix.length; // 39 characters for API name
+    
+    const truncatedNormalized = normalized.length > maxApiNameLength 
+      ? normalized.substring(0, maxApiNameLength) 
+      : normalized;
+
+    const functionName = `${prefix}${truncatedNormalized}`;
+    
+    if (functionName.length > maxFunctionNameLength) {
+      logger.warn(`Function name truncated from ${functionName} to fit AWS limits`);
+      return functionName.substring(0, maxFunctionNameLength);
+    }
+    
+    return functionName;
   }
 
   /**
@@ -2042,7 +2067,7 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
       errors.push("API name is required");
     }
 
-    if (!apiConfig.baseUrl || !this.isValidUrl(apiConfig.baseUrl)) {
+    if (!apiConfig.baseUrl) {
       errors.push("Valid base URL is required");
     }
 

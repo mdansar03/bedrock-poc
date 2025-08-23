@@ -208,13 +208,13 @@ export const agentAPI = {
     return response.data;
   },
 
-  // Enhanced Agent Chat with new parameter structure
+  // Enhanced Agent Chat with new parameter structure and conversation history
   sendEnhancedMessage: async ({
     message,
     model = "anthropic.claude-3-sonnet-20240229-v1:0",
     temperature = 0.7,
     topP = 0.9,
-    systemPrompt = null,
+    systemPrompt = undefined,
     history = {
       enabled: true,
       maxMessages: 6,
@@ -227,7 +227,8 @@ export const agentAPI = {
     },
     options = {
       useEnhancement: true
-    }
+    },
+    conversationHistory = null // NEW: Direct conversation history
   }) => {
     const payload = {
       message,
@@ -237,7 +238,8 @@ export const agentAPI = {
       systemPrompt,
       history,
       dataSources,
-      options
+      options,
+      conversationHistory // NEW: Include conversation history in payload
     };
 
     const response = await api.post("/chat/agent/", payload);
@@ -252,13 +254,14 @@ export const agentAPI = {
     model = null,
     temperature = null,
     topP = null,
-    systemPrompt = null,
+    systemPrompt = undefined,
     history = {
       enabled: true,
       maxMessages: 6,
       contextWeight: "balanced",
     },
     options = {},
+    conversationHistory = null // NEW: Direct conversation history
   }) => {
     const payload = {
       message,
@@ -270,6 +273,7 @@ export const agentAPI = {
       systemPrompt,
       history,
       options,
+      conversationHistory // NEW: Include conversation history in payload
     };
 
     const response = await api.post("/chat/agent/", payload);

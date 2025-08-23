@@ -216,7 +216,9 @@ router.post(
       .isLength({ min: 3, max: 100 })
       .withMessage("API name must be between 3 and 100 characters"),
 
-    body("baseUrl").isURL().withMessage("Valid base URL is required"),
+    body("baseUrl")
+      .notEmpty()
+      .withMessage("Valid base URL is required"),
 
     body("endpoints")
       .isArray({ min: 1 })

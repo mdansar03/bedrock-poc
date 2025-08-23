@@ -1,7 +1,8 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require('@aws-sdk/client-bedrock-agent-runtime');
+const bedrockAgentService = require('../services/bedrockAgentService');
 const bedrockService = require('../services/bedrockService');
+const actionGroupService = require('../services/actionGroupService');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -72,6 +73,25 @@ const router = express.Router();
  *                 maxLength: 4000
  *                 example: "You are a helpful AI assistant. Format responses with proper HTML markup for better readability."
  *                 description: "Custom system prompt for the agent"
+ *               history:
+ *                 type: object
+ *                 description: "Conversation history configuration"
+ *                 properties:
+ *                   enabled:
+ *                     type: boolean
+ *                     example: true
+ *                     description: "Enable conversation history"
+ *                   maxMessages:
+ *                     type: integer
+ *                     minimum: 2
+ *                     maximum: 20
+ *                     example: 6
+ *                     description: "Maximum messages to include in history"
+ *                   contextWeight:
+ *                     type: string
+ *                     enum: [light, balanced, heavy]
+ *                     example: "balanced"
+ *                     description: "Weight of conversation context"
  *               options:
  *                 type: object
  *                 properties:
@@ -134,22 +154,77 @@ router.post('/agent', [
     .isObject()
     .withMessage('Data sources must be an object'),
   body('model')
-    .optional()
-    .isString()
-    .withMessage('Model must be a string'),
+    .custom((value) => {
+      // Allow null, undefined, or string values
+      if (value === null || value === undefined || typeof value === 'string') {
+        return true;
+      }
+      throw new Error('Model must be a string or null');
+    }),
   body('temperature')
-    .optional()
-    .isFloat({ min: 0.0, max: 1.0 })
-    .withMessage('Temperature must be a number between 0.0 and 1.0'),
+    .custom((value) => {
+      // Allow null, undefined, or valid float values
+      if (value === null || value === undefined) {
+        return true;
+      }
+      if (typeof value === 'number' && value >= 0.0 && value <= 1.0) {
+        return true;
+      }
+      throw new Error('Temperature must be a number between 0.0 and 1.0 or null');
+    }),
   body('topP')
-    .optional()
-    .isFloat({ min: 0.0, max: 1.0 })
-    .withMessage('Top P must be a number between 0.0 and 1.0'),
+    .custom((value) => {
+      // Allow null, undefined, or valid float values
+      if (value === null || value === undefined) {
+        return true;
+      }
+      if (typeof value === 'number' && value >= 0.0 && value <= 1.0) {
+        return true;
+      }
+      throw new Error('Top P must be a number between 0.0 and 1.0 or null');
+    }),
   body('systemPrompt')
+    .optional()
+    .custom((value) => {
+      // Allow null, undefined, or empty string to be treated as "no system prompt"
+      if (value === null || value === undefined || value === '') {
+        return true;
+      }
+      // If a value is provided, it must be a string between 1 and 4000 characters
+      if (typeof value === 'string' && value.length >= 1 && value.length <= 4000) {
+        return true;
+      }
+      throw new Error('System prompt must be between 1 and 4000 characters');
+    }),
+  body('history.enabled')
+    .optional()
+    .isBoolean()
+    .withMessage('History enabled must be a boolean'),
+  body('history.maxMessages')
+    .optional()
+    .isInt({ min: 2, max: 20 })
+    .withMessage('History maxMessages must be between 2 and 20'),
+  body('history.contextWeight')
+    .optional()
+    .isIn(['light', 'balanced', 'heavy'])
+    .withMessage('History contextWeight must be light, balanced, or heavy'),
+  body('conversationHistory')
+    .optional()
+    .isArray()
+    .withMessage('Conversation history must be an array'),
+  body('conversationHistory.*.role')
+    .optional()
+    .isIn(['user', 'assistant'])
+    .withMessage('Each history message role must be either user or assistant'),
+  body('conversationHistory.*.content')
     .optional()
     .isString()
     .isLength({ min: 1, max: 4000 })
-    .withMessage('System prompt must be between 1 and 4000 characters')
+    .withMessage('Each history message content must be between 1 and 4000 characters'),
+  body('conversationHistory.*.timestamp')
+    .optional()
+    .isISO8601()
+    .withMessage('Each history message timestamp must be a valid ISO 8601 date')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -170,10 +245,63 @@ router.post('/agent', [
       temperature = null,
       topP = null,
       systemPrompt = null,
-      options = {}
+      history = {},
+      options = {},
+      conversationHistory = null
     } = req.body;
 
     logger.info(`🚀 STARTING TRUE AWS AGENT STREAMING: ${message.substring(0, 100)}...`);
+    if (sessionId) {
+      logger.info(`Using session ID: ${sessionId}`);
+    }
+    
+    // Log model selection if provided
+    if (model) {
+      logger.info(`Using model: ${model}`);
+    }
+    
+    // Log inference parameters if provided
+    if (temperature !== null || topP !== null) {
+      logger.info('Inference parameters:', {
+        temperature,
+        topP
+      });
+    }
+    
+    // Log system prompt if provided
+    if (systemPrompt) {
+      logger.info(`System prompt provided: ${systemPrompt.substring(0, 100)}...`);
+    }
+
+    // Log history settings if provided
+    if (Object.keys(history).length > 0) {
+      logger.info('Conversation history settings:', {
+        enabled: history.enabled !== false, // Default to true
+        maxMessages: history.maxMessages || 6,
+        contextWeight: history.contextWeight || 'balanced'
+      });
+    }
+    
+    // Log conversation history payload if provided
+    if (conversationHistory && Array.isArray(conversationHistory)) {
+      logger.info('Direct conversation history provided for streaming:', {
+        messageCount: conversationHistory.length,
+        messages: conversationHistory.map(msg => ({
+          role: msg.role,
+          contentLength: msg.content?.length || 0,
+          timestamp: msg.timestamp
+        }))
+      });
+    }
+
+    // Log data source filtering if provided
+    if (dataSources) {
+      logger.info('Data source filters applied:', {
+        websites: dataSources.websites?.length || 0,
+        pdfs: dataSources.pdfs?.length || 0,
+        documents: dataSources.documents?.length || 0
+      });
+    }
 
     // Set up Server-Sent Events headers
     res.writeHead(200, {
@@ -197,120 +325,129 @@ router.post('/agent', [
     const startTime = Date.now();
 
     try {
-      // Direct AWS SDK approach (like working test)
-      const client = new BedrockAgentRuntimeClient({
-        region: process.env.AWS_REGION || 'us-east-1',
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      // Enhanced options to include all parameters like non-streaming endpoint
+      const enhancedOptions = {
+        ...options,
+        dataSources: dataSources,
+        model: model,
+        temperature: temperature,
+        topP: topP,
+        systemPrompt: systemPrompt,
+        conversationHistory: conversationHistory, // NEW: Pass direct conversation history for streaming
+        history: {
+          enabled: history.enabled !== false, // Default to true
+          maxMessages: history.maxMessages || 6,
+          contextWeight: history.contextWeight || 'balanced',
+          ...history
         }
-      });
+      };
 
-      const command = new InvokeAgentCommand({
-        agentId: process.env.BEDROCK_AGENT_ID,
-        agentAliasId: process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID',
-        sessionId: sessionIdToUse,
-        inputText: message,
-        enableTrace: true, // Keep simple
-        // CRITICAL: Enable streaming (exactly like working test)
-        streamingConfigurations: {
-          streamFinalResponse: true
+      // Fetch the latest agent alias ID from action groups
+      let latestAlias;
+      try {
+        latestAlias = await actionGroupService.getLatestAgentAlias();
+        if (!latestAlias || !latestAlias.aliasId) {
+          throw new Error('No latest alias found or aliasId missing');
         }
-      });
-
-      logger.info("📡 INVOKING AWS AGENT DIRECTLY");
-      const response = await client.send(command);
-
-      console.log("🔄 Processing agent streaming chunks:");
-      console.log("    Structure check:", {
-        hasCompletion: !!response.completion,
-        responseKeys: Object.keys(response || {}),
-        isAsyncIterable: response.completion ? Symbol.asyncIterator in response.completion : false
-      });
-      console.log("🚀 ------------------------> RESPONSE:", response);
-
-
-      console.log("🚀 ------------------------> RESPONSE.completion:", response.stream);
-      
-      let chunkCount = 0;
-      let fullText = "";
-      let textChunkCount = 0;
-      
-      if (response.completion) {
-        for await (const chunk of response.completion) {
-          chunkCount++;
-          const elapsed = Date.now() - startTime;
-          
-          // console.log(`📦 CHUNK #${chunkCount} (at ${elapsed}ms):`, {
-          //   chunkKeys: Object.keys(chunk || {}),
-          //   hasChunk: !!chunk.chunk,
-          //   hasTrace: !!chunk.trace,
-          //   chunkType: typeof chunk
-          // });
-          
-          // Process text chunks (exactly like working test)
-          if (chunk.chunk && chunk.chunk.bytes) {
-            try {
-              const textChunk = new TextDecoder().decode(chunk.chunk.bytes);
-              fullText += textChunk;
-              textChunkCount++;
-              
-              // console.log(`✅ TEXT CHUNK: "${textChunk}" (length: ${textChunk.length}, total: ${fullText.length})`);
-              
-              // Send chunk immediately (like working test)
-              // res.write(`event: chunk\n`);
-              // res.write(`data: ${JSON.stringify({ content: textChunk })}\n\n`);
-              
-            } catch (e) {
-              logger.warn("❌ Chunk decode error:", e.message);
-              console.log(`⚠️ Chunk decode error: ${e.message}`);
-            }
-          }
-          
-          // Log trace chunks
-          if (chunk.trace) {
-            console.log(`🔍 TRACE CHUNK: Workflow step received`);
-          }
-          
-          // Log other chunk types
-          if (!chunk.chunk && !chunk.trace) {
-            console.log(`❓ UNKNOWN CHUNK TYPE:`, Object.keys(chunk));
-          }
-        }
-        
-        // Send completion
-        const totalTime = Date.now() - startTime;
-        res.write(`event: end\n`);
+        logger.info(`Using latest agent alias for streaming: ${latestAlias.aliasId} (${latestAlias.aliasName || 'Unnamed'})`);
+      } catch (aliasError) {
+        logger.error('Failed to fetch latest agent alias for streaming:', aliasError);
+        res.write(`event: error\n`);
         res.write(`data: ${JSON.stringify({
-          complete: true,
-          sessionId: sessionIdToUse,
-          totalTime: `${totalTime}ms`,
-          totalChunks: chunkCount,
-          textChunks: textChunkCount,
-          streamingType: 'direct-aws-agent-streaming'
+          error: 'Service configuration error: Unable to fetch the latest agent alias. Please check action group configuration.',
+          timestamp: new Date().toISOString()
         })}\n\n`);
         res.end();
-        
-        console.log("\n🎉 AGENT STREAMING COMPLETED:");
-        console.log(`   Total chunks: ${chunkCount}`);
-        console.log(`   Text chunks: ${textChunkCount}`);
-        console.log(`   Total text length: ${fullText.length}`);
-        console.log(`   Total time: ${totalTime}ms`);
-        console.log(`   Avg time per chunk: ${chunkCount > 0 ? (totalTime/chunkCount).toFixed(1) : 0}ms`);
-        
-        if (textChunkCount > 10 && fullText.length > 100) {
-          console.log("✅ SUCCESS: True character-by-character agent streaming confirmed!");
-        } else if (textChunkCount <= 1 && fullText.length > 100) {
-          console.log("❌ BULK RESPONSE: Agent returned complete text in single chunk (workflow streaming only)");
-        } else {
-          console.log("⚠️ MIXED: Some streaming but may not be true character-by-character");
-        }
-        
-        logger.info(`🎉 DIRECT AGENT STREAMING COMPLETED: ${textChunkCount} text chunks, ${fullText.length} chars`);
-        
-      } else {
-        throw new Error('No completion stream in response');
+        return;
       }
+
+      // Add the fetched alias ID to enhanced options
+      enhancedOptions.agentAliasId = latestAlias.aliasId;
+
+      // Use bedrockAgentService streaming method (aligned with non-streaming approach)
+      let fullContent = "";
+      let sources = [];
+      let metadata = {};
+      let chunkCount = 0;
+
+      await bedrockAgentService.invokeAgentStreaming(
+        message,
+        sessionId,
+        enhancedOptions,
+        {
+          // Real-time chunk handler
+          onChunk: (chunk) => {
+            chunkCount++;
+            fullContent += chunk;
+            
+            logger.info("🎯 AGENT STREAMING CHUNK:", {
+              length: chunk.length,
+              preview: chunk.substring(0, 30) + "...",
+              chunkNumber: chunkCount,
+              timestamp: new Date().toISOString()
+            });
+            
+            // Send chunk immediately to frontend
+            res.write(`event: chunk\n`);
+            res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+          },
+          
+          // Citation handler
+          onCitation: (citation) => {
+            sources.push(citation);
+            logger.info("📄 AGENT CITATION:", citation);
+            
+            // Send citation to frontend
+            res.write(`event: citation\n`);
+            res.write(`data: ${JSON.stringify({ source: citation })}\n\n`);
+          },
+          
+          // Metadata handler
+          onMetadata: (meta) => {
+            metadata = { ...metadata, ...meta };
+            logger.info("🔍 AGENT METADATA:", meta);
+            
+            // Send metadata to frontend
+            res.write(`event: metadata\n`);
+            res.write(`data: ${JSON.stringify(meta)}\n\n`);
+          },
+          
+          // Completion handler
+          onComplete: (finalData) => {
+            const totalTime = Date.now() - startTime;
+            
+            logger.info(`🎉 AGENT STREAMING COMPLETED: ${chunkCount} chunks, ${fullContent.length} chars, ${totalTime}ms`);
+            
+            // Send completion event
+            res.write(`event: end\n`);
+            res.write(`data: ${JSON.stringify({
+              complete: true,
+              sessionId: finalData.sessionId || sessionIdToUse,
+              totalTime: `${totalTime}ms`,
+              totalChunks: chunkCount,
+              streamingType: 'bedrock-agent-streaming',
+              tokensUsed: finalData.tokensUsed || 0,
+              sources: sources,
+              metadata: {
+                ...metadata,
+                ...finalData.metadata
+              }
+            })}\n\n`);
+            res.end();
+          },
+          
+          // Error handler
+          onError: (error) => {
+            logger.error('❌ AGENT STREAMING ERROR:', error);
+            res.write(`event: error\n`);
+            res.write(`data: ${JSON.stringify({
+              error: `Agent streaming error: ${error.message}`,
+              timestamp: new Date().toISOString()
+            })}\n\n`);
+            res.end();
+          }
+        }
+      );
       
     } catch (error) {
       logger.error('❌ AGENT STREAMING SETUP FAILED:', error);

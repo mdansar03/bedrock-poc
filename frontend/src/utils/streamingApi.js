@@ -13,6 +13,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002
  * @param {number} options.temperature - Temperature setting
  * @param {number} options.topP - Top P setting
  * @param {string} options.systemPrompt - System prompt
+ * @param {Object} options.history - Conversation history configuration
+ * @param {Array} options.conversationHistory - Direct conversation history array
  * @param {Object} options.dataSources - Data source filters
  * @param {Object} callbacks - Event callbacks
  * @param {Function} callbacks.onStart - Called when streaming starts
@@ -31,6 +33,8 @@ export const createAgentStream = async (options, callbacks) => {
     temperature,
     topP,
     systemPrompt,
+    history,
+    conversationHistory,
     dataSources,
   } = options;
 
@@ -56,7 +60,9 @@ export const createAgentStream = async (options, callbacks) => {
         model,
         temperature,
         topP,
-        systemPrompt,
+        systemPrompt: systemPrompt?.trim() || undefined,
+        history,
+        conversationHistory, // NEW: Include conversation history in streaming
         dataSources,
         options: {
           useEnhancement: true,
