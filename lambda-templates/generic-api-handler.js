@@ -53,7 +53,9 @@ const API_CONFIG = {
 const LAMBDA_VERSION = "v3.0.0-api-schema-response-format";
 
 exports.handler = async (event, context) => {
+  const startTime = Date.now();
   console.log(`=== LAMBDA VERSION: ${LAMBDA_VERSION} ===`);
+  console.log(`=== COLD START INFO: remainingTimeInMillis=${context.getRemainingTimeInMillis()}, functionVersion=${context.functionVersion} ===`);
   console.log('Received event:', JSON.stringify(event, null, 2));
   
   try {
@@ -153,6 +155,9 @@ exports.handler = async (event, context) => {
     const formattedResponse = formatResponseForAgent(apiResponse, endpoint, apiPath);
     console.log('Formatted response:', formattedResponse);
     
+    const executionTime = Date.now() - startTime;
+    console.log(`=== EXECUTION COMPLETED: ${executionTime}ms ===`);
+    
     // AWS Bedrock expects specific response format for API Schema (not function details)
     const finalResponse = {
       messageVersion: "1.0",
@@ -165,7 +170,8 @@ exports.handler = async (event, context) => {
           'application/json': {        // Content type for API response
             body: JSON.stringify({     // API response should be JSON string
               data: formattedResponse,
-              success: true
+              success: true,
+              executionTimeMs: executionTime // Add timing info for debugging
             })
           }
         }
@@ -178,7 +184,9 @@ exports.handler = async (event, context) => {
     return finalResponse;
     
   } catch (error) {
+    const executionTime = Date.now() - startTime;
     console.error('Error processing request:', error);
+    console.log(`=== EXECUTION FAILED: ${executionTime}ms ===`);
     
     return {
       messageVersion: "1.0",
@@ -191,7 +199,8 @@ exports.handler = async (event, context) => {
           'application/json': {
             body: JSON.stringify({
               error: error.message,
-              success: false
+              success: false,
+              executionTimeMs: executionTime // Add timing info even for errors
             })
           }
         }
@@ -430,9 +439,11 @@ async function makeApiCall(apiUrl, method, params, endpoint) {
       reject(new Error(`Request failed: ${error.message}`));
     });
     
-    req.setTimeout(10000, () => {
+    // Increased timeout to handle cold starts and slow external APIs
+    const timeoutMs = process.env.LAMBDA_HTTP_TIMEOUT_MS || 30000; // 30 seconds default
+    req.setTimeout(timeoutMs, () => {
       req.abort();
-      reject(new Error('Request timeout after 10 seconds'));
+      reject(new Error(`Request timeout after ${timeoutMs/1000} seconds`));
     });
     
     // Add request body for POST/PUT/PATCH

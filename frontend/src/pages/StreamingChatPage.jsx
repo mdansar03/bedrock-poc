@@ -42,7 +42,12 @@ const StreamingChatPage = () => {
     temperature: 0.7,
     topP: 0.9,
     maxTokens: 1000,
-    systemPrompt: "You are a helpful AI assistant. Format your responses using proper HTML markup with headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags for technical terms. Structure content clearly with HTML hierarchy for optimal readability.",
+    instructionType: 'default',
+    customInstructions: {
+      response_style: '',
+      context_usage: '',
+      tone: ''
+    },
   });
   
   // History configuration
@@ -167,7 +172,10 @@ const StreamingChatPage = () => {
             model: streamingSettings.model,
             temperature: streamingSettings.temperature,
             topP: streamingSettings.topP,
-            systemPrompt: streamingSettings.systemPrompt?.trim() || undefined,
+            instructionType: streamingSettings.instructionType,
+            customInstructions: Object.fromEntries(
+              Object.entries(streamingSettings.customInstructions).filter(([_, v]) => v && v.trim() !== '')
+            ),
             history: historyConfig,
             conversationHistory: getConversationHistory(), // NEW: Pass conversation history to streaming
             dataSources: selectedDataSources,
@@ -699,21 +707,84 @@ const StreamingChatPage = () => {
                 </div>
               )}
 
-              {/* System Prompt */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  System Prompt
-                </label>
-                <textarea
-                  value={streamingSettings.systemPrompt}
-                  onChange={(e) => setStreamingSettings(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                  placeholder="You are a helpful AI assistant..."
-                  className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                  rows={3}
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Define the AI's behavior and formatting preferences
-                </p>
+              {/* Professional Instructions */}
+              <div className="space-y-3 p-3 bg-purple-50 rounded border border-purple-200">
+                <h5 className="text-sm font-semibold text-purple-900">🎯 Professional Instructions</h5>
+                
+                {/* Instruction Type Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Response Style Template
+                  </label>
+                  <select
+                    value={streamingSettings.instructionType}
+                    onChange={(e) => setStreamingSettings(prev => ({ ...prev, instructionType: e.target.value }))}
+                    className="w-full text-sm border border-purple-300 rounded px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  >
+                    <option value="default">📋 Default Professional</option>
+                    <option value="business">💼 Business Executive</option>
+                    <option value="technical">⚙️ Technical Documentation</option>
+                    <option value="customer_service">🤝 Customer Service</option>
+                    <option value="concise">⚡ Concise & Direct</option>
+                    <option value="detailed">📚 Comprehensive</option>
+                  </select>
+                </div>
+
+                {/* Custom Instructions Override */}
+                <div className="space-y-2">
+                  <h6 className="text-xs font-semibold text-purple-800">Custom Instruction Overrides (Optional)</h6>
+                  
+                  <div>
+                    <label className="block text-xs text-purple-700 mb-1">Response Style</label>
+                    <input
+                      type="text"
+                      value={streamingSettings.customInstructions.response_style}
+                      onChange={(e) => setStreamingSettings(prev => ({ 
+                        ...prev, 
+                        customInstructions: { 
+                          ...prev.customInstructions, 
+                          response_style: e.target.value 
+                        } 
+                      }))}
+                      placeholder="e.g., Concise bullet points with technical details"
+                      className="w-full text-xs border border-purple-300 rounded px-2 py-1 focus:ring-1 focus:ring-purple-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs text-purple-700 mb-1">Context Usage</label>
+                    <input
+                      type="text"
+                      value={streamingSettings.customInstructions.context_usage}
+                      onChange={(e) => setStreamingSettings(prev => ({ 
+                        ...prev, 
+                        customInstructions: { 
+                          ...prev.customInstructions, 
+                          context_usage: e.target.value 
+                        } 
+                      }))}
+                      placeholder="e.g., Always reference previous technical decisions"
+                      className="w-full text-xs border border-purple-300 rounded px-2 py-1 focus:ring-1 focus:ring-purple-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs text-purple-700 mb-1">Tone</label>
+                    <input
+                      type="text"
+                      value={streamingSettings.customInstructions.tone}
+                      onChange={(e) => setStreamingSettings(prev => ({ 
+                        ...prev, 
+                        customInstructions: { 
+                          ...prev.customInstructions, 
+                          tone: e.target.value 
+                        } 
+                      }))}
+                      placeholder="e.g., Professional and encouraging"
+                      className="w-full text-xs border border-purple-300 rounded px-2 py-1 focus:ring-1 focus:ring-purple-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* History Configuration */}

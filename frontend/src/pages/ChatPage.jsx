@@ -51,11 +51,19 @@ const ChatPage = () => {
   const [agentModel, setAgentModel] = useState("anthropic.claude-3-sonnet-20240229-v1:0");
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(0.9);
-  const [systemPrompt, setSystemPrompt] = useState("You are a helpful AI assistant. Format all responses using proper HTML markup with headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags for technical terms. Structure content clearly with HTML hierarchy for optimal readability.");
+  // System prompt removed - now using Professional Instructions instead
   const [historyConfig, setHistoryConfig] = useState({
     enabled: true,
     maxMessages: 6,
     contextWeight: "balanced"
+  });
+
+  // Professional instruction settings
+  const [instructionType, setInstructionType] = useState('default');
+  const [customInstructions, setCustomInstructions] = useState({
+    response_style: '',
+    context_usage: '',
+    tone: ''
   });
   
   // HTML formatting settings
@@ -72,6 +80,46 @@ const ChatPage = () => {
     { id: "amazon.titan-text-express-v1", name: "Titan Text Express", provider: "Amazon" },
     { id: "meta.llama3-8b-instruct-v1:0", name: "Llama 3 8B", provider: "Meta" },
     { id: "meta.llama3-70b-instruct-v1:0", name: "Llama 3 70B", provider: "Meta" }
+  ];
+
+  // Professional instruction types
+  const professionalInstructionTypes = [
+    { 
+      id: 'default', 
+      name: 'Default Professional', 
+      description: 'Well-structured responses with HTML formatting',
+      icon: '📋'
+    },
+    { 
+      id: 'business', 
+      name: 'Business Executive', 
+      description: 'Strategic insights with business terminology',
+      icon: '💼'
+    },
+    { 
+      id: 'technical', 
+      name: 'Technical Documentation', 
+      description: 'Detailed technical responses with code examples',
+      icon: '⚙️'
+    },
+    { 
+      id: 'customer_service', 
+      name: 'Customer Service', 
+      description: 'Empathetic, solution-focused responses',
+      icon: '🤝'
+    },
+    { 
+      id: 'concise', 
+      name: 'Concise & Direct', 
+      description: 'Brief, essential information only',
+      icon: '⚡'
+    },
+    { 
+      id: 'detailed', 
+      name: 'Comprehensive', 
+      description: 'In-depth responses with examples',
+      icon: '📚'
+    }
   ];
 
   const messagesEndRef = useRef(null);
@@ -248,11 +296,14 @@ const ChatPage = () => {
           model: agentModel,
           temperature,
           topP,
-          systemPrompt: systemPrompt.trim() || undefined,
           history: historyConfig,
           dataSources,
           conversationHistory: getConversationHistory(), // NEW: Pass conversation history
           userId: userId, // NEW: Pass user ID from localStorage
+          instructionType: instructionType, // NEW: Professional instruction type
+          customInstructions: Object.fromEntries(
+            Object.entries(customInstructions).filter(([_, v]) => v && v.trim() !== '')
+          ), // NEW: Custom professional instructions (only non-empty values)
           options: {
             useEnhancement: enhancementOptions.requestElaboration
           }
@@ -288,6 +339,10 @@ const ChatPage = () => {
           dataSources: Object.keys(dataSources).length > 0 ? dataSources : null,
           conversationHistory: getConversationHistory(), // NEW: Pass conversation history
           userId: userId, // NEW: Pass user ID from localStorage
+          instructionType: instructionType, // NEW: Professional instruction type
+          customInstructions: Object.fromEntries(
+            Object.entries(customInstructions).filter(([_, v]) => v && v.trim() !== '')
+          ), // NEW: Custom professional instructions (only non-empty values)
           options: {
             useEnhancement: enhancementOptions.requestElaboration,
             sessionConfig: { preferences: enhancementOptions },
@@ -482,6 +537,77 @@ const ChatPage = () => {
               <div className="space-y-4 p-3 bg-blue-50 rounded border border-blue-200 mb-4">
                 <h4 className="text-sm font-semibold text-blue-900">Enhanced Agent Configuration</h4>
                 
+                {/* Professional Instructions Section */}
+                <div className="space-y-3 p-3 bg-purple-50 rounded border border-purple-200">
+                  <h5 className="text-sm font-semibold text-purple-900">🎯 Professional Instructions</h5>
+                  
+                  {/* Instruction Type Selection */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Response Style Template
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {professionalInstructionTypes.map((type) => (
+                        <label key={type.id} className="flex items-center p-2 border rounded cursor-pointer hover:bg-purple-100 transition-colors">
+                          <input
+                            type="radio"
+                            name="instructionType"
+                            value={type.id}
+                            checked={instructionType === type.id}
+                            onChange={(e) => setInstructionType(e.target.value)}
+                            className="mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500"
+                          />
+                          <div className="flex-1">
+                            <div className="flex items-center">
+                              <span className="mr-1">{type.icon}</span>
+                              <span className="text-xs font-medium">{type.name}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">{type.description}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Custom Instructions Override */}
+                  <div className="space-y-2">
+                    <h6 className="text-xs font-semibold text-purple-800">Custom Instruction Overrides (Optional)</h6>
+                    
+                    <div>
+                      <label className="block text-xs text-purple-700 mb-1">Response Style</label>
+                      <input
+                        type="text"
+                        value={customInstructions.response_style}
+                        onChange={(e) => setCustomInstructions(prev => ({ ...prev, response_style: e.target.value }))}
+                        placeholder="e.g., Concise bullet points with technical details"
+                        className="w-full text-xs border border-purple-300 rounded px-2 py-1 focus:ring-1 focus:ring-purple-500"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-xs text-purple-700 mb-1">Context Usage</label>
+                      <input
+                        type="text"
+                        value={customInstructions.context_usage}
+                        onChange={(e) => setCustomInstructions(prev => ({ ...prev, context_usage: e.target.value }))}
+                        placeholder="e.g., Always reference previous technical decisions"
+                        className="w-full text-xs border border-purple-300 rounded px-2 py-1 focus:ring-1 focus:ring-purple-500"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-xs text-purple-700 mb-1">Tone</label>
+                      <input
+                        type="text"
+                        value={customInstructions.tone}
+                        onChange={(e) => setCustomInstructions(prev => ({ ...prev, tone: e.target.value }))}
+                        placeholder="e.g., Professional and encouraging"
+                        className="w-full text-xs border border-purple-300 rounded px-2 py-1 focus:ring-1 focus:ring-purple-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
                 {/* Model Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -538,38 +664,7 @@ const ChatPage = () => {
                   </p>
                 </div>
 
-                {/* System Prompt */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    System Prompt (Optional)
-                  </label>
-                  
-                  {/* Predefined Prompt Options */}
-                  <div className="mb-2">
-                    <select
-                      onChange={(e) => setSystemPrompt(e.target.value)}
-                      className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500"
-                      value=""
-                    >
-                      <option value="">Choose a preset or write custom...</option>
-                      <option value="You are a helpful AI assistant. Format all responses using proper HTML markup with headings (h2, h3), paragraphs (p), lists (ul/ol/li), emphasis (strong/em), and code tags for technical terms. Structure content clearly with HTML hierarchy for optimal readability.">Default HTML Assistant</option>
-                      <option value="You are a technical documentation expert. Provide detailed, structured responses with examples using HTML formatting. Use h2 for main sections, h3 for subsections, ul/ol for lists, strong for important terms, and code tags for technical elements. Ensure responses are well-structured and professional.">Technical Expert (HTML)</option>
-                      <option value="You are a business consultant. Provide strategic insights and recommendations using HTML formatting. Structure responses with clear headings, bullet points for key recommendations, and emphasis on important business terms. Use professional formatting throughout.">Business Consultant (HTML)</option>
-                      <option value="You are an educational tutor. Explain concepts clearly using HTML formatting with headings for topics, numbered lists for steps, bullet points for key concepts, and emphasis for important information. Make complex topics accessible through proper structure.">Educational Tutor (HTML)</option>
-                    </select>
-                  </div>
-                  
-                  <textarea
-                    value={systemPrompt}
-                    onChange={(e) => setSystemPrompt(e.target.value)}
-                    placeholder="You are a helpful AI assistant. Format responses using proper HTML markup for better readability..."
-                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    rows={3}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Define the AI's role and behavior (HTML formatting encouraged for better display)
-                  </p>
-                </div>
+                {/* System Prompt removed - now using Professional Instructions instead */}
 
                 {/* History Configuration */}
                 <div className="space-y-2">
@@ -997,6 +1092,11 @@ const ChatPage = () => {
             <div className="flex items-center space-x-4">
               <span>
                 Mode: {useEnhancedAgent ? "Enhanced Agent" : useAgent ? "Standard Agent" : "Knowledge Base"}
+                {useEnhancedAgent && instructionType !== 'default' && (
+                  <span className="ml-1 text-purple-600">
+                    ({professionalInstructionTypes.find(t => t.id === instructionType)?.icon} {professionalInstructionTypes.find(t => t.id === instructionType)?.name})
+                  </span>
+                )}
               </span>
               <span>
                 Model:{" "}

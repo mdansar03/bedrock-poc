@@ -227,12 +227,36 @@ const options = {
               description: 'Controls nucleus sampling probability (percentage of probability distribution to consider)',
               example: 0.9
             },
-            systemPrompt: {
+            instructionType: {
               type: 'string',
-              minLength: 1,
-              maxLength: 4000,
-              description: 'Custom system prompt to provide context and instructions to the agent',
-              example: 'You are a technical documentation expert. Provide detailed, structured responses with examples.'
+              enum: ['default', 'business', 'technical', 'customer_service', 'concise', 'detailed'],
+              description: 'Type of professional instructions to apply to the agent response',
+              example: 'technical'
+            },
+            customInstructions: {
+              type: 'object',
+              properties: {
+                response_style: {
+                  type: 'string',
+                  maxLength: 500,
+                  description: 'Custom response style instruction'
+                },
+                context_usage: {
+                  type: 'string', 
+                  maxLength: 500,
+                  description: 'Custom context usage instruction'
+                },
+                tone: {
+                  type: 'string',
+                  maxLength: 200,
+                  description: 'Custom tone instruction'
+                }
+              },
+              description: 'Custom professional instruction overrides',
+              example: {
+                response_style: 'Concise bullet points with technical details',
+                tone: 'Professional and encouraging'
+              }
             },
             options: {
               type: 'object',

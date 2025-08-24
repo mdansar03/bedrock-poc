@@ -50,17 +50,6 @@ class BedrockAgentService {
     this.knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID;
     // Note: agentAliasId is now dynamically fetched from action groups API, not from env
 
-    // Log configuration for debugging
-    logger.debug("Bedrock Agent Service Configuration:", {
-      hasAgentId: !!this.agentId,
-      agentId: this.agentId
-        ? `${this.agentId.substring(0, 8)}...`
-        : "Not configured",
-      hasKnowledgeBaseId: !!this.knowledgeBaseId,
-      region: process.env.AWS_REGION || "us-east-1",
-      note: "Agent alias ID is now dynamically fetched from action groups API"
-    });
-
     // Removed session management - now using direct conversation history
 
     // Rate limiting configuration
@@ -69,12 +58,150 @@ class BedrockAgentService {
     this.maxConcurrentRequests = 2;
     this.rateLimitDelay = 1000; // 1 second between requests
 
+    // Cold start retry configuration
+    this.coldStartRetryConfig = {
+      maxRetries: 3,
+      baseDelay: 2000, // 2 seconds
+      maxDelay: 10000, // 10 seconds
+      backoffMultiplier: 2
+    };
+    
+    // Track cold start issues
+    this.coldStartDetection = {
+      isFirstCall: true,
+      consecutiveFailures: 0,
+      lastFailureTime: null
+    };
+
+    // Log configuration for debugging (AFTER coldStartRetryConfig is defined)
+    logger.debug("Bedrock Agent Service Configuration:", {
+      hasAgentId: !!this.agentId,
+      agentId: this.agentId
+        ? `${this.agentId.substring(0, 8)}...`
+        : "Not configured",
+      hasKnowledgeBaseId: !!this.knowledgeBaseId,
+      region: process.env.AWS_REGION || "us-east-1",
+      note: "Agent alias ID is now dynamically fetched from action groups API",
+      coldStartRetryEnabled: true,
+      maxColdStartRetries: this.coldStartRetryConfig.maxRetries,
+      coldStartBaseDelay: this.coldStartRetryConfig.baseDelay
+    });
+    
+    logger.info("🔥 Cold Start Protection: Enabled with retry logic for first agent calls");
+
     // Use centralized prompt manager for all instructions
 
     // Removed session cleanup - now using direct conversation history
   }
 
   // Removed session cleanup - now using direct conversation history
+
+  /**
+   * Detect if an error is likely due to cold start
+   * @param {Error} error - The error to analyze
+   * @returns {boolean} - Whether this appears to be a cold start issue
+   */
+  isColdStartError(error) {
+    const coldStartIndicators = [
+      'timeout',
+      'Request timeout',
+      'Received failed response from API execution',
+      'service unavailable',
+      'function not ready',
+      'ResourceNotReadyException',
+      'function initialization',
+      'cold start'
+    ];
+
+    const errorMessage = error.message || '';
+    const errorCode = error.code || '';
+    
+    return coldStartIndicators.some(indicator => 
+      errorMessage.toLowerCase().includes(indicator.toLowerCase()) ||
+      errorCode.toLowerCase().includes(indicator.toLowerCase())
+    );
+  }
+
+  /**
+   * Calculate cold start retry delay with exponential backoff
+   * @param {number} retryCount - Current retry attempt (0-based)
+   * @returns {number} - Delay in milliseconds
+   */
+  calculateColdStartDelay(retryCount) {
+    const { baseDelay, maxDelay, backoffMultiplier } = this.coldStartRetryConfig;
+    const delay = Math.min(
+      baseDelay * Math.pow(backoffMultiplier, retryCount),
+      maxDelay
+    );
+    return delay + (Math.random() * 500); // Add jitter
+  }
+
+  /**
+   * Execute agent request with cold start retry logic
+   * @param {Function} requestFn - Function that makes the agent request
+   * @param {string} operationName - Name of the operation for logging
+   * @returns {Promise} - Request result
+   */
+  async executeWithColdStartRetry(requestFn, operationName = 'Agent request') {
+    let lastError;
+    
+    for (let attempt = 0; attempt <= this.coldStartRetryConfig.maxRetries; attempt++) {
+      try {
+        const result = await requestFn();
+        
+        // Success - reset cold start tracking
+        if (attempt > 0) {
+          logger.info(`${operationName} succeeded after ${attempt} cold start retries`);
+        }
+        this.coldStartDetection.isFirstCall = false;
+        this.coldStartDetection.consecutiveFailures = 0;
+        
+        return result;
+      } catch (error) {
+        lastError = error;
+        
+        // Check if this is the last attempt
+        if (attempt === this.coldStartRetryConfig.maxRetries) {
+          break;
+        }
+        
+        // Check if error appears to be cold start related
+        const isColdStart = this.isColdStartError(error);
+        const isFirstCallFailure = this.coldStartDetection.isFirstCall;
+        
+        if (!isColdStart && !isFirstCallFailure) {
+          logger.warn(`${operationName} failed with non-cold-start error, not retrying:`, error.message);
+          throw error;
+        }
+        
+        // Track consecutive failures
+        this.coldStartDetection.consecutiveFailures++;
+        this.coldStartDetection.lastFailureTime = Date.now();
+        
+        // Calculate delay and wait
+        const delay = this.calculateColdStartDelay(attempt);
+        logger.warn(`${operationName} attempt ${attempt + 1} failed (cold start suspected), retrying in ${delay}ms:`, {
+          error: error.message,
+          isColdStart,
+          isFirstCall: isFirstCallFailure,
+          consecutiveFailures: this.coldStartDetection.consecutiveFailures
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    // All retries exhausted
+    logger.error(`${operationName} failed after ${this.coldStartRetryConfig.maxRetries + 1} attempts (cold start issues):`, {
+      finalError: lastError.message,
+      consecutiveFailures: this.coldStartDetection.consecutiveFailures
+    });
+    
+    // Mark first call as completed even on failure to prevent infinite retries
+    this.coldStartDetection.isFirstCall = false;
+    
+    throw new Error(`${operationName} failed after multiple cold start retries. ${lastError.message}`);
+  }
 
   /**
    * Generate a session ID if needed (for AWS agent calls)
@@ -274,37 +401,16 @@ class BedrockAgentService {
   }
 
   /**
-   * Build query enhancement based on interaction style and context
+   * Build simple query with minimal enhancement (no instructions)
    * @param {string} originalQuery - Original user query
-   * @param {string} style - Interaction style
-   * @param {Object} context - Session context
-   * @returns {string} - Enhanced query
+   * @param {string} style - Interaction style (unused - kept for compatibility)
+   * @param {Object} context - Session context (unused - kept for compatibility)
+   * @returns {string} - Clean query without instructions
    */
   buildQueryEnhancement(originalQuery, style, context) {
-    let enhancement = originalQuery;
-
-    // Add context from conversation history
-    if (context.topics && context.topics.length > 0) {
-      const recentTopics = context.topics.slice(-3).join(", ");
-      enhancement += `\n\nContext from our conversation: We've been discussing ${recentTopics}.`;
-    }
-
-    // Add style-specific enhancements
-    switch (style) {
-      case "conversational":
-        enhancement += `\n\nPlease provide a conversational response that builds on our discussion.`;
-        break;
-      case "analytical":
-        enhancement += `\n\nPlease provide a comprehensive analytical response with multiple perspectives, pros/cons, and strategic insights.`;
-        break;
-      default:
-        enhancement += `\n\nPlease provide a detailed, well-structured response with relevant examples and context.`;
-    }
-
-    // Add HTML formatting instruction to all enhancements
-    enhancement += `\n\nIMPORTANT: Format your response using proper HTML markup for better readability. `;
-
-    return enhancement;
+    // Return original query without any instruction enhancements
+    // All instructions now go to sessionState.additionalInstructions
+    return originalQuery;
   }
 
   /**
@@ -483,19 +589,119 @@ VIOLATION CONSEQUENCES: Providing information from unauthorized sources is a cri
   }
 
   /**
-   * Invoke Bedrock Agent with enhanced query processing and data source filtering
+   * Get professional instruction templates for different use cases
+   * @param {string} instructionType - Type of professional instructions
+   * @returns {Object} - Professional instruction configuration
+   */
+  getProfessionalInstructions(instructionType = 'default') {
+    const templates = {
+      'default': {
+        response_style: "Professional, well-structured responses with clear headings, bullet points, and proper formatting using HTML markup",
+        context_usage: "Always prioritize current query but use conversation history for relevant context and continuity",
+        formatting_rules: "Use HTML elements (h2, h3, p, ul, ol, li, strong, em, code) for enhanced readability and structure",
+        tone: "Professional, helpful, and informative"
+      },
+      'business': {
+        response_style: "Executive-level communication with strategic insights, bullet points for key recommendations, and professional business terminology",
+        context_usage: "Reference previous business discussions and build upon strategic context from conversation history",
+        formatting_rules: "Use structured HTML with clear sections, bullet points for action items, and emphasis on ROI and business impact",
+        tone: "Strategic, confident, and results-oriented"
+      },
+      'technical': {
+        response_style: "Detailed technical documentation with code examples, step-by-step instructions, and proper technical terminology",
+        context_usage: "Reference previous technical context and build upon implementation discussions from conversation history",
+        formatting_rules: "Use HTML with code blocks, numbered lists for procedures, and clear technical hierarchy",
+        tone: "Precise, detailed, and technically accurate"
+      },
+      'customer_service': {
+        response_style: "Empathetic, solution-focused responses with clear next steps and personalized addressing when user ID is available",
+        context_usage: "Always reference user's previous interactions and personalize responses based on user context and conversation history",
+        formatting_rules: "Use HTML with clear sections, numbered steps for solutions, and emphasis on user-specific information",
+        tone: "Empathetic, helpful, and customer-focused"
+      },
+      'concise': {
+        response_style: "Brief, direct responses with essential information only, using bullet points and minimal formatting",
+        context_usage: "Only use conversation history if directly relevant to current query",
+        formatting_rules: "Use minimal HTML - mainly bullet points and basic emphasis",
+        tone: "Direct, efficient, and to-the-point"
+      },
+      'detailed': {
+        response_style: "Comprehensive, in-depth responses with examples, explanations, and multiple perspectives",
+        context_usage: "Extensively use conversation history to provide comprehensive context and build detailed narratives",
+        formatting_rules: "Use full HTML structure with multiple sections, subsections, examples, and detailed formatting",
+        tone: "Thorough, educational, and comprehensive"
+      }
+    };
+
+    return templates[instructionType] || templates['default'];
+  }
+
+  /**
+   * Build professional session state with additional instructions
+   * @param {Object} options - Configuration options
+   * @returns {Object} - Session state with professional instructions
+   */
+  buildProfessionalSessionState(options = {}) {
+    const {
+      instructionType = 'default',
+      customInstructions = {},
+      userId = null,
+      conversationContext = null,
+      dataSources = null
+    } = options;
+
+    // Get base professional instructions
+    const baseInstructions = this.getProfessionalInstructions(instructionType);
+    
+    // Build enhanced instructions with context
+    const additionalInstructions = {
+      ...baseInstructions,
+      ...customInstructions
+    };
+
+    // Add user-specific instructions if userId is provided
+    if (userId) {
+      additionalInstructions.user_context = `User ID: ${userId}. When user asks about "my" or personal information, always reference this User ID for personalized responses.`;
+    }
+
+    // Add conversation context instructions if available
+    if (conversationContext) {
+      additionalInstructions.conversation_context = "Use the conversation history provided to maintain context and provide coherent, relevant responses that build upon previous exchanges.";
+    }
+
+    // Add data source filtering instructions if filters are applied
+    if (dataSources && Object.keys(dataSources).length > 0) {
+      const sourceTypes = [];
+      if (dataSources.websites?.length > 0) sourceTypes.push(`websites: ${dataSources.websites.join(', ')}`);
+      if (dataSources.pdfs?.length > 0) sourceTypes.push(`PDFs: ${dataSources.pdfs.join(', ')}`);
+      if (dataSources.documents?.length > 0) sourceTypes.push(`documents: ${dataSources.documents.join(', ')}`);
+      
+      if (sourceTypes.length > 0) {
+        additionalInstructions.data_source_restriction = `CRITICAL: Only use information from these specific data sources: ${sourceTypes.join('; ')}. Do not provide information from other sources.`;
+      }
+    }
+
+    return {
+      additionalInstructions
+    };
+  }
+
+  /**
+   * Invoke Bedrock Agent with enhanced query processing and professional instructions
    * @param {string} query - User query
    * @param {string} sessionId - Session ID for conversation continuity
    * @param {Object} options - Additional options including dataSources filter, inference parameters, history settings
    * @param {string} options.model - Model to use for inference
    * @param {number} options.temperature - Temperature for response generation (0.0-1.0)
    * @param {number} options.topP - Top P for nucleus sampling (0.0-1.0)
-   * @param {string} options.systemPrompt - Custom system prompt for the agent
+   * @param {string} options.instructionType - Type of professional instructions to apply (default: 'default')
    * @param {Object} options.dataSources - Data source filtering options
    * @param {Object} options.history - Conversation history options
    * @param {boolean} options.history.enabled - Whether to include conversation history (default: true)
    * @param {number} options.history.maxMessages - Maximum number of previous messages to include (default: 6)
    * @param {string} options.history.contextWeight - Context weight: 'light', 'balanced', 'heavy' (default: 'balanced')
+   * @param {string} options.instructionType - Type of professional instructions to apply (default: 'default')
+   * @param {Object} options.customInstructions - Custom professional instruction overrides
    * @returns {Promise<Object>} - Agent response
    */
   async invokeAgent(query, sessionId = null, options = {}, dataSources = null) {
@@ -549,7 +755,7 @@ VIOLATION CONSEQUENCES: Providing information from unauthorized sources is a cri
         hasConversationContext: !!conversationContext,
         hasDataSourceFilters: !!options.dataSources,
         hasCustomModel: !!options.model,
-        hasSystemPrompt: !!options.systemPrompt,
+        instructionType: options.instructionType || 'default',
         temperature: options.temperature,
         topP: options.topP,
         historyEnabled: historyOptions.enabled,
@@ -559,40 +765,19 @@ VIOLATION CONSEQUENCES: Providing information from unauthorized sources is a cri
       let enhancedQuery =
         options.useEnhancement !== false ? analysis.queryEnhancement : query;
 
-      // Add conversation context to enhance query with history
-      if (conversationContext) {
-        enhancedQuery = `CONVERSATION CONTEXT:
-${conversationContext}
-
-CURRENT QUERY: ${enhancedQuery}
-
-Please answer the current query while being aware of the conversation context above. Prioritize the current query but use the conversation history to provide more relevant and coherent responses.`;
-        logger.info("Applied conversation context to query");
-      }
-
-      // Apply system prompt if provided
-      // if (options.systemPrompt) {
-      //   enhancedQuery = `${options.systemPrompt}\n\nUser Query: ${enhancedQuery}`;
-      //   logger.info("Applied custom system prompt to query");
-      // }
-
-      // Apply user context if userId is provided
+      // Clean approach: Only add minimal user context to query if needed
+      // All other instructions go to sessionState.additionalInstructions
       if (options.userId) {
-        enhancedQuery = `USER CONTEXT:
-User ID: ${options.userId}
+        enhancedQuery = `${enhancedQuery}
 
-CURRENT QUERY: ${enhancedQuery}
-
-Please answer the current query in the context of the specified user. When the user asks about "my" orders, deliveries, or personal information, reference the User ID: ${options.userId} to provide personalized responses.`;
-        logger.info(`Applied user context for user ID: ${options.userId}`);
+[User ID: ${options.userId}]`;
+        logger.info(`Added clean user context for user ID: ${options.userId}`);
       }
 
+      // Data source filtering is now handled in sessionState.additionalInstructions
+      // No need to modify the query text
       if (options.dataSources) {
-        enhancedQuery = this.applyDataSourceFiltering(
-          enhancedQuery,
-          options.dataSources
-        );
-        logger.info("Applied data source filtering to query");
+        logger.info("Data source filtering will be applied via sessionState.additionalInstructions");
       }
 
       // Validate that agentAliasId is provided in options
@@ -609,8 +794,20 @@ Please answer the current query in the context of the specified user. When the u
         console.log("this.knowledgeBaseId:", this.knowledgeBaseId);
         console.log("=== END DEBUG ===");
       
-      // Prepare session state with knowledge base configuration and filters
-      let sessionState = { ...options.sessionState };
+      // Build professional session state with additional instructions
+      const professionalSessionState = this.buildProfessionalSessionState({
+        instructionType: options.instructionType || 'default',
+        customInstructions: options.customInstructions || {},
+        userId: options.userId,
+        conversationContext: conversationContext,
+        dataSources: options.dataSources
+      });
+
+      // Prepare session state with knowledge base configuration, filters, and professional instructions
+      let sessionState = { 
+        ...options.sessionState,
+        ...professionalSessionState
+      };
       
       // DISABLED: AWS native filtering is causing errors - using text-based filtering instead
       // Use text-based filtering approach which is more reliable
@@ -671,7 +868,7 @@ Please answer the current query in the context of the specified user. When the u
         hasInferenceConfig: !!agentParams.inferenceConfiguration,
         inferenceConfig: agentParams.inferenceConfiguration,
         customModel: options.model,
-        hasSystemPrompt: !!options.systemPrompt,
+        instructionType: options.instructionType || 'default',
         fullQuery: enhancedQuery, // DEBUG: See the complete query being sent
       });
 
@@ -680,10 +877,12 @@ Please answer the current query in the context of the specified user. When the u
 
       console.log(command, "Command ===================>");
 
-      // Add to rate limiting queue
-      const response = await this.executeWithRateLimit(async () => {
-        return await this.agentRuntimeClient.send(command);
-      });
+      // Add to rate limiting queue with cold start retry logic
+      const response = await this.executeWithColdStartRetry(async () => {
+        return await this.executeWithRateLimit(async () => {
+          return await this.agentRuntimeClient.send(command);
+        });
+      }, 'Bedrock Agent Invocation');
 
       logger.debug("Raw AWS response received:", {
         hasCompletion: !!response.completion,
@@ -715,7 +914,7 @@ Please answer the current query in the context of the specified user. When the u
               temperature: options.temperature,
               topP: options.topP,
               model: options.model,
-              systemPrompt: options.systemPrompt,
+              instructionType: options.instructionType || 'default',
               agentAliasId: options.agentAliasId,
             }
           );
@@ -740,7 +939,7 @@ Please answer the current query in the context of the specified user. When the u
               temperature: options.temperature,
               topP: options.topP,
               model: options.model,
-              systemPrompt: options.systemPrompt,
+              instructionType: options.instructionType || 'default',
               agentAliasId: options.agentAliasId,
             }
           );
@@ -769,7 +968,7 @@ Please answer the current query in the context of the specified user. When the u
           temperature: options.temperature,
           topP: options.topP,
           model: options.model,
-          systemPrompt: options.systemPrompt,
+          instructionType: options.instructionType || 'default',
           agentAliasId: options.agentAliasId,
           conversationContextUsed: !!conversationContext,
           historyOptions: historyOptions,
@@ -1124,6 +1323,7 @@ Please answer the current query in the context of the specified user. When the u
 
       logger.info("Testing agent with simple query...");
 
+      // Note: invokeAgent already includes cold start retry logic
       const response = await this.invokeAgent(testQuery, "agent-test-session", {
         useEnhancement: false,
         sessionConfig: { testMode: true },
@@ -1137,6 +1337,10 @@ Please answer the current query in the context of the specified user. When the u
         citationCount: response.citations.length,
         responseTime: response.metadata.responseTime,
         timestamp: new Date().toISOString(),
+        coldStartInfo: {
+          isFirstCall: this.coldStartDetection.isFirstCall,
+          consecutiveFailures: this.coldStartDetection.consecutiveFailures
+        }
       };
     } catch (error) {
       logger.error("Agent test failed:", error);
@@ -1144,6 +1348,11 @@ Please answer the current query in the context of the specified user. When the u
         success: false,
         error: error.message,
         timestamp: new Date().toISOString(),
+        coldStartInfo: {
+          isFirstCall: this.coldStartDetection.isFirstCall,
+          consecutiveFailures: this.coldStartDetection.consecutiveFailures,
+          likelyColdStart: this.isColdStartError(error)
+        }
       };
     }
   }
@@ -1337,40 +1546,18 @@ Please answer the current query in the context of the specified user. When the u
       let enhancedQuery =
         options.useEnhancement !== false ? analysis.queryEnhancement : query;
 
-      // Add conversation context to enhance query with history
-      if (conversationContext) {
-        enhancedQuery = `CONVERSATION CONTEXT:
-${conversationContext}
-
-CURRENT QUERY: ${enhancedQuery}
-
-Please answer the current query while being aware of the conversation context above. Prioritize the current query but use the conversation history to provide more relevant and coherent responses.`;
-        logger.info("Applied conversation context to streaming query");
-      }
-
-      // Apply system prompt if provided
-      if (options.systemPrompt) {
-        enhancedQuery = `${options.systemPrompt}\n\nUser Query: ${enhancedQuery}`;
-        logger.info("Applied custom system prompt to streaming query");
-      }
-
-      // Apply user context if userId is provided
+      // Clean approach for streaming: Only add minimal user context to query if needed
+      // All other instructions go to sessionState.additionalInstructions
       if (options.userId) {
-        enhancedQuery = `USER CONTEXT:
-User ID: ${options.userId}
+        enhancedQuery = `${enhancedQuery}
 
-CURRENT QUERY: ${enhancedQuery}
-
-Please answer the current query in the context of the specified user. When the user asks about "my" orders, deliveries, or personal information, reference the User ID: ${options.userId} to provide personalized responses.`;
-        logger.info(`Applied user context for streaming query with user ID: ${options.userId}`);
+[User ID: ${options.userId}]`;
+        logger.info(`Added clean user context for streaming query with user ID: ${options.userId}`);
       }
 
+      // Data source filtering is now handled in sessionState.additionalInstructions for streaming
       if (options.dataSources) {
-        enhancedQuery = this.applyDataSourceFiltering(
-          enhancedQuery,
-          options.dataSources
-        );
-        logger.info("Applied data source filtering to streaming query");
+        logger.info("Data source filtering will be applied via sessionState.additionalInstructions for streaming");
       }
 
       // Validate that agentAliasId is provided in options for streaming
@@ -1381,8 +1568,20 @@ Please answer the current query in the context of the specified user. When the u
       // Build AWS native retrieval filters for strict data source filtering (streaming)
       const retrievalFilters = this.buildRetrievalFilters(options.dataSources);
       
-      // Prepare session state with knowledge base configuration and filters for streaming
-      let sessionState = { ...options.sessionState };
+      // Build professional session state with additional instructions for streaming
+      const professionalSessionState = this.buildProfessionalSessionState({
+        instructionType: options.instructionType || 'default',
+        customInstructions: options.customInstructions || {},
+        userId: options.userId,
+        conversationContext: conversationContext,
+        dataSources: options.dataSources
+      });
+
+      // Prepare session state with knowledge base configuration, filters, and professional instructions for streaming
+      let sessionState = { 
+        ...options.sessionState,
+        ...professionalSessionState
+      };
       
       // Add knowledge base configuration with filtering if filters are provided
       if (retrievalFilters && this.knowledgeBaseId) {
@@ -1462,31 +1661,34 @@ Please answer the current query in the context of the specified user. When the u
       // Create the invoke agent command
       const command = new InvokeAgentCommand(agentParams);
 
-      // Add to rate limiting queue and execute with streaming
-      await this.executeWithRateLimit(async () => {
-        const response = await this.agentRuntimeClient.send(command);
-        await this.processAgentResponseStreaming(response, {
-          onChunk,
-          onCitation,
-          onMetadata,
-          onComplete: (finalData) => {
-            const totalTime = Date.now() - startTime;
-            
-            // Session-based storage removed - conversation history now managed by frontend
+      // Add to rate limiting queue and execute with streaming and cold start retry
+      await this.executeWithColdStartRetry(async () => {
+        return await this.executeWithRateLimit(async () => {
+          const response = await this.agentRuntimeClient.send(command);
+          await this.processAgentResponseStreaming(response, {
+            onChunk,
+            onCitation,
+            onMetadata,
+            onComplete: (finalData) => {
+              const totalTime = Date.now() - startTime;
+              
+              // Session-based storage removed - conversation history now managed by frontend
 
-            onComplete({
-              sessionId: actualSessionId,
-              totalTime: `${totalTime}ms`,
-              tokensUsed: finalData.tokensUsed || 0,
-              citationCount: finalData.citationCount || 0,
-              fullText: finalData.fullText || "",
-              analysis: analysis,
-              appliedFilters: options.dataSources || null,
-            });
-          },
-          onError
+              onComplete({
+                sessionId: actualSessionId,
+                totalTime: `${totalTime}ms`,
+                tokensUsed: finalData.tokensUsed || 0,
+                citationCount: finalData.citationCount || 0,
+                fullText: finalData.fullText || "",
+                analysis: analysis,
+                appliedFilters: options.dataSources || null,
+              });
+            },
+            onError
+          });
+          return true; // Return something for the retry logic
         });
-      });
+      }, 'Bedrock Agent Streaming Invocation');
 
     } catch (error) {
       logger.error("Streaming agent invocation failed:", {
@@ -1731,7 +1933,7 @@ Please answer the current query in the context of the specified user. When the u
    * @param {Object} agentResponse - Processed agent response
    * @param {Object} analysis - Query analysis
    * @param {Object} dataSources - Data sources used for filtering (if any)
-   * @param {Object} inferenceParams - Inference parameters used (temperature, topP, model, systemPrompt)
+   * @param {Object} inferenceParams - Inference parameters used (temperature, topP, model, instructionType)
    * @returns {Object} - Final response
    */
   buildFinalResponse(
@@ -1771,7 +1973,7 @@ Please answer the current query in the context of the specified user. When the u
           temperature: inferenceParams.temperature,
           topP: inferenceParams.topP,
           model: inferenceParams.model,
-          hasSystemPrompt: !!inferenceParams.systemPrompt,
+          instructionType: inferenceParams.instructionType || 'default',
         },
         // Add HTML processing metadata
         htmlFormatting: agentResponse.htmlMetadata || {

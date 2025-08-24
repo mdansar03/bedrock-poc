@@ -60,7 +60,9 @@ const router = express.Router();
  *                 model: "anthropic.claude-3-sonnet-20240229-v1:0"
  *                 temperature: 0.7
  *                 topP: 0.9
- *                 systemPrompt: "You are a technical documentation expert. Provide detailed, structured responses with examples."
+ *                 instructionType: "technical"
+ *                 customInstructions: 
+ *                   response_style: "Detailed technical documentation with examples"
  *                 history:
  *                   enabled: true
  *                   maxMessages: 6
@@ -207,19 +209,7 @@ router.post('/', [
       }
       throw new Error('Top P must be a number between 0.0 and 1.0 or null');
     }),
-  body('systemPrompt')
-    .optional()
-    .custom((value) => {
-      // Allow null, undefined, or empty string to be treated as "no system prompt"
-      if (value === null || value === undefined || value === '') {
-        return true;
-      }
-      // If a value is provided, it must be a string between 1 and 4000 characters
-      if (typeof value === 'string' && value.length >= 1 && value.length <= 40000) {
-        return true;
-      }
-      throw new Error('System prompt must be between 1 and 40000 characters');
-    }),
+  // systemPrompt validation removed - now using Professional Instructions instead
   body('history.enabled')
     .optional()
     .isBoolean()
@@ -253,7 +243,30 @@ router.post('/', [
     .isString()
     .isLength({ min: 1, max: 100 })
     .withMessage('User ID must be between 1 and 100 characters')
-    .trim()
+    .trim(),
+  body('instructionType')
+    .optional()
+    .isIn(['default', 'business', 'technical', 'customer_service', 'concise', 'detailed'])
+    .withMessage('Instruction type must be one of: default, business, technical, customer_service, concise, detailed'),
+  body('customInstructions')
+    .optional()
+    .isObject()
+    .withMessage('Custom instructions must be an object'),
+  body('customInstructions.response_style')
+    .optional()
+    .isString()
+    .isLength({ max: 500 })
+    .withMessage('Response style instruction must be less than 500 characters'),
+  body('customInstructions.context_usage')
+    .optional()
+    .isString()
+    .isLength({ max: 500 })
+    .withMessage('Context usage instruction must be less than 500 characters'),
+  body('customInstructions.tone')
+    .optional()
+    .isString()
+    .isLength({ max: 200 })
+    .withMessage('Tone instruction must be less than 200 characters')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -274,10 +287,11 @@ router.post('/', [
       model = null,
       temperature = null,
       topP = null,
-      systemPrompt = null,
       history = {},
       conversationHistory = null,
-      userId = null
+      userId = null,
+      instructionType = 'default',
+      customInstructions = {}
     } = req.body;
 
     logger.info(`Received agent query: ${message.substring(0, 100)}...`);
@@ -301,10 +315,7 @@ router.post('/', [
       });
     }
     
-    // Log system prompt if provided
-    if (systemPrompt) {
-      logger.info(`System prompt provided: ${systemPrompt.substring(0, 100)}...`);
-    }
+    // System prompt logging removed - now using Professional Instructions instead
 
     // Log history settings if provided
     if (Object.keys(history).length > 0) {
@@ -363,16 +374,28 @@ router.post('/', [
       }
     }
 
-    // Enhanced options to include data source filtering, inference parameters, history settings, conversation history, and user ID
+    // Log professional instruction settings
+    if (instructionType !== 'default') {
+      logger.info(`Using professional instruction type: ${instructionType}`);
+    }
+    if (Object.keys(customInstructions).length > 0) {
+      logger.info('Custom professional instructions provided:', {
+        keys: Object.keys(customInstructions),
+        customCount: Object.keys(customInstructions).length
+      });
+    }
+
+    // Enhanced options to include data source filtering, inference parameters, history settings, conversation history, user ID, and professional instructions
     const enhancedOptions = {
       ...options,
       dataSources: validatedDataSources, // Use validated data sources for filtering
       model: model,
       temperature: temperature,
       topP: topP,
-      systemPrompt: systemPrompt,
       conversationHistory: conversationHistory, // NEW: Pass direct conversation history
       userId: userId, // NEW: Pass user ID for context enhancement
+      instructionType: instructionType, // NEW: Professional instruction type
+      customInstructions: customInstructions, // NEW: Custom professional instructions
       history: {
         enabled: history.enabled !== false, // Default to true
         maxMessages: history.maxMessages || 6,

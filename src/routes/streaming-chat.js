@@ -74,11 +74,14 @@ const router = express.Router();
  *                 maximum: 1.0
  *                 example: 0.9
  *                 description: "Controls nucleus sampling probability"
- *               systemPrompt:
+ *               instructionType:
  *                 type: string
- *                 maxLength: 4000
- *                 example: "You are a helpful AI assistant. Format responses with proper HTML markup for better readability."
- *                 description: "Custom system prompt for the agent"
+ *                 enum: [default, business, technical, customer_service, concise, detailed]
+ *                 example: "business"
+ *                 description: "Type of professional instructions to apply"
+ *               customInstructions:
+ *                 type: object
+ *                 description: "Custom professional instruction overrides"
  *               history:
  *                 type: object
  *                 description: "Conversation history configuration"
@@ -189,19 +192,14 @@ router.post('/agent', [
       }
       throw new Error('Top P must be a number between 0.0 and 1.0 or null');
     }),
-  body('systemPrompt')
+  body('instructionType')
     .optional()
-    .custom((value) => {
-      // Allow null, undefined, or empty string to be treated as "no system prompt"
-      if (value === null || value === undefined || value === '') {
-        return true;
-      }
-      // If a value is provided, it must be a string between 1 and 4000 characters
-      if (typeof value === 'string' && value.length >= 1 && value.length <= 4000) {
-        return true;
-      }
-      throw new Error('System prompt must be between 1 and 4000 characters');
-    }),
+    .isIn(['default', 'business', 'technical', 'customer_service', 'concise', 'detailed'])
+    .withMessage('Instruction type must be one of: default, business, technical, customer_service, concise, detailed'),
+  body('customInstructions')
+    .optional()
+    .isObject()
+    .withMessage('Custom instructions must be an object'),
   body('history.enabled')
     .optional()
     .isBoolean()
@@ -250,7 +248,8 @@ router.post('/agent', [
       model = null,
       temperature = null,
       topP = null,
-      systemPrompt = null,
+      instructionType = 'default',
+      customInstructions = {},
       history = {},
       options = {},
       conversationHistory = null
@@ -275,8 +274,13 @@ router.post('/agent', [
     }
     
     // Log system prompt if provided
-    if (systemPrompt) {
-      logger.info(`System prompt provided: ${systemPrompt.substring(0, 100)}...`);
+    if (instructionType !== 'default') {
+      logger.info(`Using professional instruction type: ${instructionType}`);
+    }
+    if (Object.keys(customInstructions).length > 0) {
+      logger.info('Custom professional instructions provided for streaming:', {
+        keys: Object.keys(customInstructions)
+      });
     }
 
     // Log history settings if provided
@@ -338,7 +342,8 @@ router.post('/agent', [
         model: model,
         temperature: temperature,
         topP: topP,
-        systemPrompt: systemPrompt,
+        instructionType: instructionType,
+        customInstructions: customInstructions,
         conversationHistory: conversationHistory, // NEW: Pass direct conversation history for streaming
         history: {
           enabled: history.enabled !== false, // Default to true

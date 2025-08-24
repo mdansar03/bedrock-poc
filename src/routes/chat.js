@@ -399,6 +399,20 @@ router.post(
       .optional()
       .isArray()
       .withMessage("Documents must be an array of file names"),
+    body("instructionType")
+      .optional()
+      .isIn(['default', 'business', 'technical', 'customer_service', 'concise', 'detailed'])
+      .withMessage('Instruction type must be one of: default, business, technical, customer_service, concise, detailed'),
+    body("customInstructions")
+      .optional()
+      .isObject()
+      .withMessage("Custom instructions must be an object"),
+    body("userId")
+      .optional()
+      .isString()
+      .isLength({ min: 1, max: 100 })
+      .withMessage("User ID must be between 1 and 100 characters")
+      .trim(),
   ],
   async (req, res) => {
     try {
@@ -418,6 +432,9 @@ router.post(
         useAgent = process.env.BEDROCK_AGENT_ID ? true : false, // Default to agent if available
         enhancementOptions = {},
         dataSources = null,
+        instructionType = 'default',
+        customInstructions = {},
+        userId = null,
       } = req.body;
 
       logger.info(`Received chat query: ${message.substring(0, 100)}...`);
@@ -431,6 +448,27 @@ router.post(
       if (Object.keys(enhancementOptions).length > 0) {
         logger.info(`Enhancement options:`, enhancementOptions);
       }
+
+      // Log professional instruction settings
+      if (instructionType !== 'default') {
+        logger.info(`Using professional instruction type: ${instructionType}`);
+      }
+      if (Object.keys(customInstructions).length > 0) {
+        logger.info('Custom professional instructions provided:', {
+          keys: Object.keys(customInstructions)
+        });
+      }
+      if (userId) {
+        logger.info(`User ID provided: ${userId}`);
+      }
+
+      // Create enhanced options with professional instructions
+      const enhancedOptionsWithInstructions = {
+        ...enhancementOptions,
+        instructionType,
+        customInstructions,
+        userId
+      };
 
       // Validate and normalize data sources if provided
       let validatedDataSources = null;
@@ -535,7 +573,7 @@ router.post(
             message,
             sessionId,
             model,
-            enhancementOptions
+            enhancedOptionsWithInstructions
           );
           response = {
             answer: kbResponse.answer,
@@ -561,7 +599,7 @@ router.post(
           message,
           sessionId,
           model,
-          enhancementOptions
+          enhancedOptionsWithInstructions
         );
         response = {
           answer: kbResponse.answer,
@@ -637,6 +675,20 @@ router.post(
       .optional()
       .isObject()
       .withMessage("Enhancement options must be an object"),
+    body("instructionType")
+      .optional()
+      .isIn(['default', 'business', 'technical', 'customer_service', 'concise', 'detailed'])
+      .withMessage('Instruction type must be one of: default, business, technical, customer_service, concise, detailed'),
+    body("customInstructions")
+      .optional()
+      .isObject()
+      .withMessage("Custom instructions must be an object"),
+    body("userId")
+      .optional()
+      .isString()
+      .isLength({ min: 1, max: 100 })
+      .withMessage("User ID must be between 1 and 100 characters")
+      .trim(),
   ],
   async (req, res) => {
     try {
@@ -649,7 +701,14 @@ router.post(
         });
       }
 
-      const { prompt, model = null, enhancementOptions = {} } = req.body;
+      const { 
+        prompt, 
+        model = null, 
+        enhancementOptions = {},
+        instructionType = 'default',
+        customInstructions = {},
+        userId = null
+      } = req.body;
 
       logger.info(
         `Received direct model query: ${prompt.substring(0, 100)}...`
@@ -661,11 +720,32 @@ router.post(
         logger.info(`Enhancement options:`, enhancementOptions);
       }
 
+      // Log professional instruction settings for direct model
+      if (instructionType !== 'default') {
+        logger.info(`Using professional instruction type for direct model: ${instructionType}`);
+      }
+      if (Object.keys(customInstructions).length > 0) {
+        logger.info('Custom professional instructions provided for direct model:', {
+          keys: Object.keys(customInstructions)
+        });
+      }
+      if (userId) {
+        logger.info(`User ID provided for direct model: ${userId}`);
+      }
+
+      // Create enhanced options with professional instructions for direct model
+      const enhancedOptionsWithInstructions = {
+        ...enhancementOptions,
+        instructionType,
+        customInstructions,
+        userId
+      };
+
       // Invoke model directly with enhancements
       const response = await bedrockService.invokeModel(
         prompt,
         model,
-        enhancementOptions
+        enhancedOptionsWithInstructions
       );
 
       res.json({

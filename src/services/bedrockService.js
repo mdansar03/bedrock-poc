@@ -279,15 +279,93 @@ class BedrockService {
   }
 
   /**
-   * Simple query enhancement (simplified version)
+   * Get professional instruction templates for knowledge base queries
+   * @param {string} instructionType - Type of professional instructions
+   * @returns {Object} - Professional instruction configuration
+   */
+  getProfessionalInstructions(instructionType = 'default') {
+    const templates = {
+      'default': {
+        response_style: "Professional, well-structured responses with clear headings, bullet points, and proper formatting using HTML markup",
+        context_usage: "Use provided context efficiently and cite sources appropriately",
+        formatting_rules: "Use HTML elements (h2, h3, p, ul, ol, li, strong, em, code) for enhanced readability and structure",
+        tone: "Professional, helpful, and informative"
+      },
+      'business': {
+        response_style: "Executive-level communication with strategic insights, bullet points for key recommendations, and professional business terminology",
+        context_usage: "Focus on business impact, ROI, and strategic implications from the knowledge base content",
+        formatting_rules: "Use structured HTML with clear sections, bullet points for action items, and emphasis on business value",
+        tone: "Strategic, confident, and results-oriented"
+      },
+      'technical': {
+        response_style: "Detailed technical documentation with code examples, step-by-step instructions, and proper technical terminology",
+        context_usage: "Provide comprehensive technical context with implementation details and best practices",
+        formatting_rules: "Use HTML with code blocks, numbered lists for procedures, and clear technical hierarchy",
+        tone: "Precise, detailed, and technically accurate"
+      },
+      'customer_service': {
+        response_style: "Empathetic, solution-focused responses with clear next steps and personalized addressing when user ID is available",
+        context_usage: "Prioritize customer-specific information and provide actionable solutions based on available context",
+        formatting_rules: "Use HTML with clear sections, numbered steps for solutions, and emphasis on user-specific information",
+        tone: "Empathetic, helpful, and customer-focused"
+      },
+      'concise': {
+        response_style: "Brief, direct responses with essential information only, using bullet points and minimal formatting",
+        context_usage: "Extract only the most relevant information from knowledge base sources",
+        formatting_rules: "Use minimal HTML - mainly bullet points and basic emphasis",
+        tone: "Direct, efficient, and to-the-point"
+      },
+      'detailed': {
+        response_style: "Comprehensive, in-depth responses with examples, explanations, and multiple perspectives",
+        context_usage: "Extensively utilize knowledge base content to provide comprehensive coverage of topics",
+        formatting_rules: "Use full HTML structure with multiple sections, subsections, examples, and detailed formatting",
+        tone: "Thorough, educational, and comprehensive"
+      }
+    };
+
+    return templates[instructionType] || templates['default'];
+  }
+
+  /**
+   * Apply professional instructions to query enhancement
    * @param {string} originalQuery - Original user query
-   * @param {Object} options - Enhancement options (unused in simplified version)
-   * @returns {string} - The original query (no complex enhancement)
+   * @param {Object} options - Enhancement options including professional instructions
+   * @returns {string} - Enhanced query with professional instructions
    */
   enhanceQuery(originalQuery, options = {}) {
-    // Simplified version - just return the original query
-    // Complex prompt management has been removed
-    return originalQuery;
+    const {
+      instructionType = 'default',
+      customInstructions = {},
+      userId = null
+    } = options;
+
+    // Get professional instructions
+    const instructions = this.getProfessionalInstructions(instructionType);
+    
+    // Merge with custom instructions
+    const finalInstructions = {
+      ...instructions,
+      ...customInstructions
+    };
+
+    // Build enhanced query with professional instructions
+    let enhancedQuery = originalQuery;
+
+    // Add professional instruction context
+    const instructionContext = `
+PROFESSIONAL RESPONSE INSTRUCTIONS:
+- Response Style: ${finalInstructions.response_style}
+- Context Usage: ${finalInstructions.context_usage}
+- Formatting Rules: ${finalInstructions.formatting_rules}
+- Tone: ${finalInstructions.tone}
+
+${userId ? `User Context: User ID is ${userId}. When responding to questions about "my" information, reference this User ID.` : ''}
+
+USER QUERY: ${originalQuery}
+
+Please respond according to the professional instructions above, ensuring high-quality, well-formatted responses that meet the specified style and tone requirements.`;
+
+    return instructionContext;
   }
 
   /**

@@ -305,7 +305,8 @@ Current error: ${error.message}`);
         Variables: {
           API_BASE_URL: apiConfig.baseUrl,
           API_NAME: apiConfig.apiName,
-          NODE_ENV: 'production'
+          NODE_ENV: 'production',
+          LAMBDA_HTTP_TIMEOUT_MS: '45000' // 45 seconds for cold starts and slow APIs
           // Removed API_CONFIG - it's embedded in the function code to avoid 4KB env var limit
         },
       },
