@@ -2,7 +2,13 @@ const express = require("express");
 const { body, validationResult, query } = require("express-validator");
 const bedrockService = require("../services/bedrockService");
 const bedrockAgentService = require("../services/bedrockAgentService");
+const DataManagementService = require("../services/dataManagementService");
+const dataSourceValidator = require("../utils/dataSourceValidator");
 const logger = require("../utils/logger");
+
+// Initialize data management service for validation
+const dataManagementService = new DataManagementService();
+dataSourceValidator.setDataManagementService(dataManagementService);
 
 const router = express.Router();
 
@@ -377,6 +383,22 @@ router.post(
       .optional()
       .isBoolean()
       .withMessage("Structure response must be a boolean"),
+    body("dataSources")
+      .optional()
+      .isObject()
+      .withMessage("Data sources must be an object"),
+    body("dataSources.websites")
+      .optional()
+      .isArray()
+      .withMessage("Websites must be an array of domain names"),
+    body("dataSources.pdfs")
+      .optional()
+      .isArray()
+      .withMessage("PDFs must be an array of file names"),
+    body("dataSources.documents")
+      .optional()
+      .isArray()
+      .withMessage("Documents must be an array of file names"),
   ],
   async (req, res) => {
     try {
@@ -395,6 +417,7 @@ router.post(
         model = null,
         useAgent = process.env.BEDROCK_AGENT_ID ? true : false, // Default to agent if available
         enhancementOptions = {},
+        dataSources = null,
       } = req.body;
 
       logger.info(`Received chat query: ${message.substring(0, 100)}...`);
@@ -409,6 +432,42 @@ router.post(
         logger.info(`Enhancement options:`, enhancementOptions);
       }
 
+      // Validate and normalize data sources if provided
+      let validatedDataSources = null;
+      let dataSourceWarnings = [];
+      let sourceFilteringInfo = null;
+
+      if (dataSources) {
+        try {
+          const validationResult = await dataSourceValidator.validateDataSources(dataSources);
+          validatedDataSources = validationResult.validatedDataSources;
+          dataSourceWarnings = validationResult.warnings || [];
+
+          sourceFilteringInfo = {
+            originalCount: validationResult.originalCount || 0,
+            validatedCount: validationResult.sourceCount || 0,
+            filteringApplied: !!validatedDataSources,
+            warnings: dataSourceWarnings
+          };
+
+          if (validatedDataSources) {
+            logger.info('Data source filtering will be applied:', {
+              websites: validatedDataSources.websites?.length || 0,
+              pdfs: validatedDataSources.pdfs?.length || 0,
+              documents: validatedDataSources.documents?.length || 0,
+              originalSources: validationResult.originalCount,
+              validSources: validationResult.sourceCount
+            });
+          } else if (validationResult.originalCount > 0) {
+            logger.warn('No valid data sources found, filtering disabled');
+          }
+        } catch (validationError) {
+          logger.error('Data source validation failed:', validationError);
+          dataSourceWarnings.push(`Data source validation failed: ${validationError.message}`);
+          // Continue without filtering if validation fails
+        }
+      }
+
       let response;
 
       if (useAgent) {
@@ -420,6 +479,7 @@ router.post(
             {
               useEnhancement: enhancementOptions.useEnhancement !== false,
               sessionConfig: enhancementOptions.sessionConfig || {},
+              dataSources: validatedDataSources, // Pass validated data sources for filtering
             }
           );
 
@@ -460,6 +520,9 @@ router.post(
               tokensUsed: agentResponse.metadata?.tokensUsed,
             },
             method: "agent",
+            // Enhanced filtering information
+            dataSourceFiltering: sourceFilteringInfo,
+            dataSourceWarnings: dataSourceWarnings.length > 0 ? dataSourceWarnings : undefined,
           };
         } catch (agentError) {
           logger.warn(
@@ -481,6 +544,15 @@ router.post(
             model: bedrockService.getModelId(model),
             method: "knowledge_base_fallback",
             fallbackReason: agentError.message,
+            // Enhanced filtering information (fallback doesn't support filtering but include warning)
+            dataSourceFiltering: validatedDataSources ? { 
+              ...sourceFilteringInfo,
+              fallbackNote: "Data source filtering not available in fallback mode" 
+            } : null,
+            dataSourceWarnings: dataSourceWarnings.length > 0 ? [
+              ...dataSourceWarnings,
+              "Data source filtering unavailable due to agent fallback"
+            ] : ["Data source filtering unavailable due to agent fallback"],
           };
         }
       } else {
@@ -497,6 +569,15 @@ router.post(
           sessionId: kbResponse.sessionId,
           model: bedrockService.getModelId(model),
           method: "knowledge_base",
+          // Enhanced filtering information (direct KB doesn't support filtering but include warning)
+          dataSourceFiltering: validatedDataSources ? { 
+            ...sourceFilteringInfo,
+            fallbackNote: "Data source filtering not available in direct knowledge base mode" 
+          } : null,
+          dataSourceWarnings: dataSourceWarnings.length > 0 ? [
+            ...dataSourceWarnings,
+            "Data source filtering only available in agent mode"
+          ] : validatedDataSources ? ["Data source filtering only available in agent mode"] : undefined,
         };
       }
 

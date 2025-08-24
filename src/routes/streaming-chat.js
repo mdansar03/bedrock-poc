@@ -3,7 +3,13 @@ const { body, validationResult } = require('express-validator');
 const bedrockAgentService = require('../services/bedrockAgentService');
 const bedrockService = require('../services/bedrockService');
 const actionGroupService = require('../services/actionGroupService');
+const DataManagementService = require('../services/dataManagementService');
+const dataSourceValidator = require('../utils/dataSourceValidator');
 const logger = require('../utils/logger');
+
+// Initialize data management service for validation
+const dataManagementService = new DataManagementService();
+dataSourceValidator.setDataManagementService(dataManagementService);
 
 const router = express.Router();
 

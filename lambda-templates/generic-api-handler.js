@@ -375,8 +375,12 @@ async function makeApiCall(apiUrl, method, params, endpoint) {
       }
     };
     
-    // Add authentication headers
-    addAuthenticationHeaders(options.headers);
+    // Add authentication headers (may also modify URL for query-based auth)
+    apiUrl = addAuthenticationHeaders(options.headers, apiUrl);
+    
+    // Re-parse URL in case it was modified for query authentication
+    const updatedUrl = url.parse(apiUrl);
+    options.path = updatedUrl.path;
     
     // Add custom headers from parameters
     if (endpoint.parameters) {
@@ -446,29 +450,52 @@ async function makeApiCall(apiUrl, method, params, endpoint) {
 /**
  * Add authentication headers based on configuration
  */
-function addAuthenticationHeaders(headers) {
+function addAuthenticationHeaders(headers, apiUrl) {
   if (!API_CONFIG.authentication || API_CONFIG.authentication.type === 'none') {
-    return;
+    return apiUrl;
   }
   
   const auth = API_CONFIG.authentication;
+  console.log('Adding authentication:', auth.type);
   
   switch (auth.type) {
     case 'apiKey':
       if (auth.location === 'header') {
         headers[auth.name] = auth.value;
+        console.log(`Added API key to header: ${auth.name}`);
+      } else if (auth.location === 'query') {
+        // Add to URL query parameters
+        const urlObj = new URL(apiUrl);
+        urlObj.searchParams.set(auth.name, auth.value);
+        console.log(`Added API key to query: ${auth.name}`);
+        return urlObj.toString();
       }
       break;
       
     case 'bearer':
-      headers['Authorization'] = `Bearer ${auth.value}`;
+      // Ensure proper Bearer format - if token doesn't start with 'Bearer ', add it
+      const token = auth.value;
+      const bearerToken = token && token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}`;
+      headers['Authorization'] = bearerToken;
+      console.log('Added Bearer token to Authorization header');
       break;
       
     case 'basic':
-      // Assume auth.value is already base64 encoded username:password
-      headers['Authorization'] = `Basic ${auth.value}`;
+      // Basic authentication - expect username:password format
+      let credentials;
+      if (auth.value.includes(':')) {
+        // Already in username:password format
+        credentials = Buffer.from(auth.value).toString('base64');
+      } else {
+        // Assume it's already base64 encoded
+        credentials = auth.value;
+      }
+      headers['Authorization'] = `Basic ${credentials}`;
+      console.log('Added Basic auth to Authorization header');
       break;
   }
+  
+  return apiUrl;
 }
 
 /**

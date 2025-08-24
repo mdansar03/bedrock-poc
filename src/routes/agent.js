@@ -3,7 +3,13 @@ const { body, validationResult, query } = require('express-validator');
 const bedrockAgentService = require('../services/bedrockAgentService');
 const agentSetupUtility = require('../utils/agentSetup');
 const actionGroupService = require('../services/actionGroupService');
+const DataManagementService = require('../services/dataManagementService');
+const dataSourceValidator = require('../utils/dataSourceValidator');
 const logger = require('../utils/logger');
+
+// Initialize data management service for validation
+const dataManagementService = new DataManagementService();
+dataSourceValidator.setDataManagementService(dataManagementService);
 
 const router = express.Router();
 
@@ -310,19 +316,46 @@ router.post('/', [
       });
     }
 
-    // Log data source filtering if provided
+    // Validate and normalize data sources if provided
+    let validatedDataSources = null;
+    let dataSourceWarnings = [];
+    let sourceFilteringInfo = null;
+
     if (dataSources) {
-      logger.info('Data source filters applied:', {
-        websites: dataSources.websites?.length || 0,
-        pdfs: dataSources.pdfs?.length || 0,
-        documents: dataSources.documents?.length || 0
-      });
+      try {
+        const validationResult = await dataSourceValidator.validateDataSources(dataSources);
+        validatedDataSources = validationResult.validatedDataSources;
+        dataSourceWarnings = validationResult.warnings || [];
+
+        sourceFilteringInfo = {
+          originalCount: validationResult.originalCount || 0,
+          validatedCount: validationResult.sourceCount || 0,
+          filteringApplied: !!validatedDataSources,
+          warnings: dataSourceWarnings
+        };
+
+        if (validatedDataSources) {
+          logger.info('Data source filtering will be applied:', {
+            websites: validatedDataSources.websites?.length || 0,
+            pdfs: validatedDataSources.pdfs?.length || 0,
+            documents: validatedDataSources.documents?.length || 0,
+            originalSources: validationResult.originalCount,
+            validSources: validationResult.sourceCount
+          });
+        } else if (validationResult.originalCount > 0) {
+          logger.warn('No valid data sources found, filtering disabled');
+        }
+      } catch (validationError) {
+        logger.error('Data source validation failed:', validationError);
+        dataSourceWarnings.push(`Data source validation failed: ${validationError.message}`);
+        // Continue without filtering if validation fails
+      }
     }
 
     // Enhanced options to include data source filtering, inference parameters, history settings, and conversation history
     const enhancedOptions = {
       ...options,
-      dataSources: dataSources,
+      dataSources: validatedDataSources, // Use validated data sources for filtering
       model: model,
       temperature: temperature,
       topP: topP,
@@ -421,7 +454,10 @@ router.post('/', [
           responseTime: response.metadata?.responseTime,
           tokensUsed: response.metadata?.tokensUsed
         },
-        appliedFilters: dataSources || null,
+        // Enhanced filtering information
+        dataSourceFiltering: sourceFilteringInfo,
+        dataSourceWarnings: dataSourceWarnings.length > 0 ? dataSourceWarnings : undefined,
+        appliedFilters: validatedDataSources || null, // Use validated data sources
         method: 'agent',
         timestamp: new Date().toISOString()
       }

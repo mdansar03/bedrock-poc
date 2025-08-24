@@ -720,9 +720,42 @@ async function makeApiCall(apiUrl, method, params, endpoint) {
         };
         
         // Add authentication if configured
-        if (API_CONFIG.authentication) {
+        if (API_CONFIG.authentication && API_CONFIG.authentication.type !== 'none') {
+            console.log('Adding authentication:', API_CONFIG.authentication.type);
+            
             if (API_CONFIG.authentication.type === 'apiKey') {
-                options.headers[API_CONFIG.authentication.name] = API_CONFIG.authentication.value;
+                // API Key authentication
+                if (API_CONFIG.authentication.location === 'header') {
+                    options.headers[API_CONFIG.authentication.name] = API_CONFIG.authentication.value;
+                    console.log(\`Added API key to header: \${API_CONFIG.authentication.name}\`);
+                } else if (API_CONFIG.authentication.location === 'query') {
+                    // Add to URL query parameters
+                    const urlObj = new URL(apiUrl);
+                    urlObj.searchParams.set(API_CONFIG.authentication.name, API_CONFIG.authentication.value);
+                    // Update the original URL variables
+                    apiUrl = urlObj.toString();
+                    options.path = urlObj.pathname + urlObj.search;
+                    console.log(\`Added API key to query: \${API_CONFIG.authentication.name}\`);
+                }
+            } else if (API_CONFIG.authentication.type === 'bearer') {
+                // Bearer token authentication
+                const token = API_CONFIG.authentication.value;
+                // Ensure proper Bearer format - if token doesn't start with 'Bearer ', add it
+                const bearerToken = token && token.toLowerCase().startsWith('bearer ') ? token : \`Bearer \${token}\`;
+                options.headers['Authorization'] = bearerToken;
+                console.log('Added Bearer token to Authorization header');
+            } else if (API_CONFIG.authentication.type === 'basic') {
+                // Basic authentication - expect username:password format
+                let credentials;
+                if (API_CONFIG.authentication.value.includes(':')) {
+                    // Already in username:password format
+                    credentials = Buffer.from(API_CONFIG.authentication.value).toString('base64');
+                } else {
+                    // Assume it's already base64 encoded
+                    credentials = API_CONFIG.authentication.value;
+                }
+                options.headers['Authorization'] = \`Basic \${credentials}\`;
+                console.log('Added Basic auth to Authorization header');
             }
         }
         

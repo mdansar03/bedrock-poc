@@ -565,6 +565,11 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                           authentication: {
                             ...apiConfig.authentication,
                             type: e.target.value,
+                            // Auto-configure for bearer tokens
+                            location: e.target.value === 'bearer' ? 'header' : apiConfig.authentication.location,
+                            name: e.target.value === 'bearer' ? 'Authorization' : 
+                                  e.target.value === 'basic' ? 'Authorization' : 
+                                  apiConfig.authentication.name,
                           },
                         })
                       }
@@ -617,8 +622,19 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                               },
                             })
                           }
-                          placeholder="X-API-Key, Authorization, etc."
+                          placeholder={
+                            apiConfig.authentication.type === 'bearer' ? 'Authorization (auto-set)' :
+                            apiConfig.authentication.type === 'basic' ? 'Authorization (auto-set)' :
+                            apiConfig.authentication.type === 'apiKey' ? 'X-API-Key, X-Auth-Token, etc.' :
+                            'Header/query parameter name'
+                          }
+                          disabled={apiConfig.authentication.type === 'bearer' || apiConfig.authentication.type === 'basic'}
                         />
+                        {(apiConfig.authentication.type === 'bearer' || apiConfig.authentication.type === 'basic') && (
+                          <div className="text-xs text-blue-600 mt-1">
+                            ℹ️ Auto-set to "Authorization" for {apiConfig.authentication.type === 'bearer' ? 'Bearer tokens' : 'Basic auth'}
+                          </div>
+                        )}
                       </div>
 
                       <div>
@@ -638,8 +654,28 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                               },
                             })
                           }
-                          placeholder="API key or token"
+                          placeholder={
+                            apiConfig.authentication.type === 'bearer' ? 'your-bearer-token-here (without "Bearer " prefix)' :
+                            apiConfig.authentication.type === 'basic' ? 'username:password or base64-encoded-credentials' :
+                            apiConfig.authentication.type === 'apiKey' ? 'your-api-key-value' :
+                            'Authentication value'
+                          }
                         />
+                        {apiConfig.authentication.type === 'bearer' && (
+                          <div className="text-xs text-amber-600 mt-1">
+                            💡 Enter just the token value. "Bearer " prefix will be added automatically.
+                          </div>
+                        )}
+                        {apiConfig.authentication.type === 'basic' && (
+                          <div className="text-xs text-amber-600 mt-1">
+                            💡 Enter as "username:password" or pre-encoded base64 credentials.
+                          </div>
+                        )}
+                        {apiConfig.authentication.type === 'apiKey' && (
+                          <div className="text-xs text-green-600 mt-1">
+                            🔑 Enter your API key value as provided by the API documentation.
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
