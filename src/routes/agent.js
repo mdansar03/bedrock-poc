@@ -65,6 +65,7 @@ const router = express.Router();
  *                   enabled: true
  *                   maxMessages: 6
  *                   contextWeight: "balanced"
+ *                 userId: "user-001"
  *     responses:
  *       200:
  *         description: Successfully generated agent response
@@ -246,7 +247,13 @@ router.post('/', [
   body('conversationHistory.*.timestamp')
     .optional()
     .isISO8601()
-    .withMessage('Each history message timestamp must be a valid ISO 8601 date')
+    .withMessage('Each history message timestamp must be a valid ISO 8601 date'),
+  body('userId')
+    .optional()
+    .isString()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('User ID must be between 1 and 100 characters')
+    .trim()
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -269,12 +276,16 @@ router.post('/', [
       topP = null,
       systemPrompt = null,
       history = {},
-      conversationHistory = null
+      conversationHistory = null,
+      userId = null
     } = req.body;
 
     logger.info(`Received agent query: ${message.substring(0, 100)}...`);
     if (sessionId) {
       logger.info(`Using session ID: ${sessionId}`);
+    }
+    if (userId) {
+      logger.info(`Using user ID: ${userId}`);
     }
     
     // Log model selection if provided
@@ -352,7 +363,7 @@ router.post('/', [
       }
     }
 
-    // Enhanced options to include data source filtering, inference parameters, history settings, and conversation history
+    // Enhanced options to include data source filtering, inference parameters, history settings, conversation history, and user ID
     const enhancedOptions = {
       ...options,
       dataSources: validatedDataSources, // Use validated data sources for filtering
@@ -361,6 +372,7 @@ router.post('/', [
       topP: topP,
       systemPrompt: systemPrompt,
       conversationHistory: conversationHistory, // NEW: Pass direct conversation history
+      userId: userId, // NEW: Pass user ID for context enhancement
       history: {
         enabled: history.enabled !== false, // Default to true
         maxMessages: history.maxMessages || 6,

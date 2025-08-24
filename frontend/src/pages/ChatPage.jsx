@@ -61,6 +61,9 @@ const ChatPage = () => {
   // HTML formatting settings
   const [showHTMLFormatInfo, setShowHTMLFormatInfo] = useState(false);
   
+  // User ID from localStorage
+  const [userId, setUserId] = useState(null);
+  
   // Available models for enhanced agent
   const enhancedModels = [
     { id: "anthropic.claude-3-sonnet-20240229-v1:0", name: "Claude 3 Sonnet", provider: "Anthropic" },
@@ -92,7 +95,39 @@ const ChatPage = () => {
   useEffect(() => {
     loadAvailableModels();
     checkAgentAvailability();
+    loadUserIdFromStorage();
   }, []);
+
+  const loadUserIdFromStorage = () => {
+    try {
+      const storedUserId = localStorage.getItem('userId');
+      if (storedUserId) {
+        setUserId(storedUserId);
+        console.log('Loaded userId from localStorage:', storedUserId);
+      } else {
+        // If no userId in localStorage, you could generate one or prompt user
+        console.log('No userId found in localStorage');
+      }
+    } catch (error) {
+      console.error('Error loading userId from localStorage:', error);
+    }
+  };
+
+  const updateUserId = (newUserId) => {
+    try {
+      if (newUserId) {
+        localStorage.setItem('userId', newUserId);
+        setUserId(newUserId);
+        console.log('Updated userId in localStorage:', newUserId);
+      } else {
+        localStorage.removeItem('userId');
+        setUserId(null);
+        console.log('Removed userId from localStorage');
+      }
+    } catch (error) {
+      console.error('Error updating userId in localStorage:', error);
+    }
+  };
 
   const loadAvailableModels = async () => {
     try {
@@ -217,6 +252,7 @@ const ChatPage = () => {
           history: historyConfig,
           dataSources,
           conversationHistory: getConversationHistory(), // NEW: Pass conversation history
+          userId: userId, // NEW: Pass user ID from localStorage
           options: {
             useEnhancement: enhancementOptions.requestElaboration
           }
@@ -251,6 +287,7 @@ const ChatPage = () => {
           sessionId: sessionId,
           dataSources: Object.keys(dataSources).length > 0 ? dataSources : null,
           conversationHistory: getConversationHistory(), // NEW: Pass conversation history
+          userId: userId, // NEW: Pass user ID from localStorage
           options: {
             useEnhancement: enhancementOptions.requestElaboration,
             sessionConfig: { preferences: enhancementOptions },
@@ -376,6 +413,52 @@ const ChatPage = () => {
         {showSettings && (
           <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
             <h3 className="text-lg font-semibold mb-3">Chat Settings</h3>
+
+            {/* User ID Management */}
+            <div className="mb-4 p-3 bg-yellow-50 rounded border border-yellow-200">
+              <h4 className="text-sm font-semibold text-yellow-900 mb-2">User Identity</h4>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-xs text-yellow-700 mb-1">
+                    Current User ID: {userId || 'Not set'}
+                  </label>
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      placeholder="Enter your user ID (e.g., user-001)"
+                      className="flex-1 text-sm border border-yellow-300 rounded px-3 py-1 focus:ring-1 focus:ring-yellow-500"
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          updateUserId(e.target.value.trim());
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const input = document.querySelector('input[placeholder*="Enter your user ID"]');
+                        updateUserId(input.value.trim());
+                        input.value = '';
+                      }}
+                      className="px-3 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                    >
+                      Set
+                    </button>
+                    {userId && (
+                      <button
+                        onClick={() => updateUserId(null)}
+                        className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-yellow-600 mt-1">
+                    Set your user ID to get personalized responses about your orders and data
+                  </p>
+                </div>
+              </div>
+            </div>
 
             {/* Enhanced Agent Mode Toggle */}
             <div className="mb-4 p-3 bg-green-50 rounded border border-green-200">
@@ -903,9 +986,14 @@ const ChatPage = () => {
           </form>
 
           <div className="mt-2 flex justify-between text-xs text-gray-500">
-            <span>
-              Session ID: {sessionId || "New session will be created"}
-            </span>
+            <div className="flex items-center space-x-4">
+              <span>
+                Session ID: {sessionId || "New session will be created"}
+              </span>
+              <span className={`${userId ? 'text-green-600' : 'text-orange-600'}`}>
+                User ID: {userId || 'Not set'}
+              </span>
+            </div>
             <div className="flex items-center space-x-4">
               <span>
                 Mode: {useEnhancedAgent ? "Enhanced Agent" : useAgent ? "Standard Agent" : "Knowledge Base"}

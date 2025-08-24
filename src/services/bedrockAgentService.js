@@ -576,6 +576,17 @@ Please answer the current query while being aware of the conversation context ab
       //   logger.info("Applied custom system prompt to query");
       // }
 
+      // Apply user context if userId is provided
+      if (options.userId) {
+        enhancedQuery = `USER CONTEXT:
+User ID: ${options.userId}
+
+CURRENT QUERY: ${enhancedQuery}
+
+Please answer the current query in the context of the specified user. When the user asks about "my" orders, deliveries, or personal information, reference the User ID: ${options.userId} to provide personalized responses.`;
+        logger.info(`Applied user context for user ID: ${options.userId}`);
+      }
+
       if (options.dataSources) {
         enhancedQuery = this.applyDataSourceFiltering(
           enhancedQuery,
@@ -1341,6 +1352,17 @@ Please answer the current query while being aware of the conversation context ab
       if (options.systemPrompt) {
         enhancedQuery = `${options.systemPrompt}\n\nUser Query: ${enhancedQuery}`;
         logger.info("Applied custom system prompt to streaming query");
+      }
+
+      // Apply user context if userId is provided
+      if (options.userId) {
+        enhancedQuery = `USER CONTEXT:
+User ID: ${options.userId}
+
+CURRENT QUERY: ${enhancedQuery}
+
+Please answer the current query in the context of the specified user. When the user asks about "my" orders, deliveries, or personal information, reference the User ID: ${options.userId} to provide personalized responses.`;
+        logger.info(`Applied user context for streaming query with user ID: ${options.userId}`);
       }
 
       if (options.dataSources) {

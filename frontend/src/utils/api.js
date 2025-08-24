@@ -228,7 +228,8 @@ export const agentAPI = {
     options = {
       useEnhancement: true
     },
-    conversationHistory = null // NEW: Direct conversation history
+    conversationHistory = null, // NEW: Direct conversation history
+    userId = null // NEW: User ID for personalization
   }) => {
     const payload = {
       message,
@@ -239,7 +240,8 @@ export const agentAPI = {
       history,
       dataSources,
       options,
-      conversationHistory // NEW: Include conversation history in payload
+      conversationHistory, // NEW: Include conversation history in payload
+      userId // NEW: Include user ID in payload
     };
 
     const response = await api.post("/chat/agent/", payload);
@@ -261,7 +263,8 @@ export const agentAPI = {
       contextWeight: "balanced",
     },
     options = {},
-    conversationHistory = null // NEW: Direct conversation history
+    conversationHistory = null, // NEW: Direct conversation history
+    userId = null // NEW: User ID for personalization
   }) => {
     const payload = {
       message,
@@ -273,7 +276,8 @@ export const agentAPI = {
       systemPrompt,
       history,
       options,
-      conversationHistory // NEW: Include conversation history in payload
+      conversationHistory, // NEW: Include conversation history in payload
+      userId // NEW: Include user ID in payload
     };
 
     const response = await api.post("/chat/agent/", payload);
