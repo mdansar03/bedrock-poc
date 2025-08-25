@@ -45,7 +45,7 @@ const ChatPage = () => {
     pdfs: [],
     documents: [],
   });
-  
+
   // Enhanced agent settings
   const [useEnhancedAgent, setUseEnhancedAgent] = useState(true);
   const [agentModel, setAgentModel] = useState("anthropic.claude-3-sonnet-20240229-v1:0");
@@ -55,7 +55,7 @@ const ChatPage = () => {
   const [historyConfig, setHistoryConfig] = useState({
     enabled: true,
     maxMessages: 6,
-    contextWeight: "balanced"
+    contextWeight: "balanced",
   });
 
   // Professional instruction settings
@@ -74,12 +74,36 @@ const ChatPage = () => {
   
   // Available models for enhanced agent
   const enhancedModels = [
-    { id: "anthropic.claude-3-sonnet-20240229-v1:0", name: "Claude 3 Sonnet", provider: "Anthropic" },
-    { id: "anthropic.claude-3-haiku-20240307-v1:0", name: "Claude 3 Haiku", provider: "Anthropic" },
-    { id: "anthropic.claude-3-opus-20240229-v1:0", name: "Claude 3 Opus", provider: "Anthropic" },
-    { id: "amazon.titan-text-express-v1", name: "Titan Text Express", provider: "Amazon" },
-    { id: "meta.llama3-8b-instruct-v1:0", name: "Llama 3 8B", provider: "Meta" },
-    { id: "meta.llama3-70b-instruct-v1:0", name: "Llama 3 70B", provider: "Meta" }
+    {
+      id: "anthropic.claude-3-sonnet-20240229-v1:0",
+      name: "Claude 3 Sonnet",
+      provider: "Anthropic",
+    },
+    {
+      id: "anthropic.claude-3-haiku-20240307-v1:0",
+      name: "Claude 3 Haiku",
+      provider: "Anthropic",
+    },
+    {
+      id: "anthropic.claude-3-opus-20240229-v1:0",
+      name: "Claude 3 Opus",
+      provider: "Anthropic",
+    },
+    {
+      id: "amazon.titan-text-express-v1",
+      name: "Titan Text Express",
+      provider: "Amazon",
+    },
+    {
+      id: "meta.llama3-8b-instruct-v1:0",
+      name: "Llama 3 8B",
+      provider: "Meta",
+    },
+    {
+      id: "meta.llama3-70b-instruct-v1:0",
+      name: "Llama 3 70B",
+      provider: "Meta",
+    },
   ];
 
   // Professional instruction types
@@ -228,10 +252,10 @@ const ChatPage = () => {
         ? await agentAPI.test()
         : await chatAPI.testKnowledgeBase();
 
-      const testContent = `${useAgent ? "Agent" : "Knowledge Base"} Test Result:\n\n${
-        response.data.answer || response.data.response
-      }`;
-      
+      const testContent = `${
+        useAgent ? "Agent" : "Knowledge Base"
+      } Test Result:\n\n${response.data.answer || response.data.response}`;
+
       const botMessage = {
         id: Date.now() + 1,
         type: "bot",
@@ -288,7 +312,7 @@ const ChatPage = () => {
         const dataSources = {
           websites: selectedDataSources.websites || [],
           pdfs: selectedDataSources.pdfs || [],
-          documents: selectedDataSources.documents || []
+          documents: selectedDataSources.documents || [],
         };
 
         response = await agentAPI.sendEnhancedMessage({
@@ -305,8 +329,8 @@ const ChatPage = () => {
             Object.entries(customInstructions).filter(([_, v]) => v && v.trim() !== '')
           ), // NEW: Custom professional instructions (only non-empty values)
           options: {
-            useEnhancement: enhancementOptions.requestElaboration
-          }
+            useEnhancement: enhancementOptions.requestElaboration,
+          },
         });
       } else if (useAgent && agentInfo) {
         // Original Agent Mode - Prepare data sources for filtering (only include non-empty arrays)
@@ -323,13 +347,20 @@ const ChatPage = () => {
 
         // --- Fetch latest aliasId before sending message to agent ---
         let latestAliasId = null;
-        try {
-          latestAliasId = await getLatestAgentAlias();
-        } catch (err) {
-          // fallback: show error and skip agent call
-          throw new Error(
-            "No valid agent alias found. Please create an alias."
-          );
+        // Try to get from localStorage first (set by ActionGroupPage after edit)
+        latestAliasId = localStorage.getItem("bedrock_latest_alias_id");
+        if (!latestAliasId) {
+          try {
+            latestAliasId = await getLatestAgentAlias();
+            if (latestAliasId) {
+              localStorage.setItem("bedrock_latest_alias_id", latestAliasId);
+            }
+          } catch (err) {
+            // fallback: show error and skip agent call
+            throw new Error(
+              "No valid agent alias found. Please create an alias."
+            );
+          }
         }
 
         // Use agent API with data source filtering and latest aliasId
@@ -448,11 +479,12 @@ const ChatPage = () => {
         </div>
         <p className="text-gray-600">
           Ask questions about your scraped content. I'll use{" "}
-          {useEnhancedAgent 
-            ? "enhanced agents with advanced configuration" 
-            : useAgent 
-              ? "intelligent agents" 
-              : "the knowledge base"} to provide accurate answers.
+          {useEnhancedAgent
+            ? "enhanced agents with advanced configuration"
+            : useAgent
+            ? "intelligent agents"
+            : "the knowledge base"}{" "}
+          to provide accurate answers.
         </p>
 
         {/* Data Source Filter */}
@@ -529,7 +561,8 @@ const ChatPage = () => {
                 </span>
               </label>
               <p className="text-xs text-green-600 ml-6">
-                Advanced agent with temperature, model selection, and conversation history
+                Advanced agent with temperature, model selection, and
+                conversation history
               </p>
             </div>
 
@@ -641,7 +674,8 @@ const ChatPage = () => {
                     className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Controls creativity. Lower = more focused, Higher = more creative
+                    Controls creativity. Lower = more focused, Higher = more
+                    creative
                   </p>
                 </div>
 
@@ -668,13 +702,20 @@ const ChatPage = () => {
 
                 {/* History Configuration */}
                 <div className="space-y-2">
-                  <h5 className="text-sm font-medium text-gray-700">Conversation History</h5>
-                  
+                  <h5 className="text-sm font-medium text-gray-700">
+                    Conversation History
+                  </h5>
+
                   <label className="flex items-center">
                     <input
                       type="checkbox"
                       checked={historyConfig.enabled}
-                      onChange={(e) => setHistoryConfig(prev => ({ ...prev, enabled: e.target.checked }))}
+                      onChange={(e) =>
+                        setHistoryConfig((prev) => ({
+                          ...prev,
+                          enabled: e.target.checked,
+                        }))
+                      }
                       className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                     />
                     <span className="text-sm">Enable conversation history</span>
@@ -691,16 +732,28 @@ const ChatPage = () => {
                           min="1"
                           max="20"
                           value={historyConfig.maxMessages}
-                          onChange={(e) => setHistoryConfig(prev => ({ ...prev, maxMessages: parseInt(e.target.value) }))}
+                          onChange={(e) =>
+                            setHistoryConfig((prev) => ({
+                              ...prev,
+                              maxMessages: parseInt(e.target.value),
+                            }))
+                          }
                           className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                         />
                       </div>
-                      
+
                       <div>
-                        <label className="block text-xs text-gray-600 mb-1">Context Weight</label>
+                        <label className="block text-xs text-gray-600 mb-1">
+                          Context Weight
+                        </label>
                         <select
                           value={historyConfig.contextWeight}
-                          onChange={(e) => setHistoryConfig(prev => ({ ...prev, contextWeight: e.target.value }))}
+                          onChange={(e) =>
+                            setHistoryConfig((prev) => ({
+                              ...prev,
+                              contextWeight: e.target.value,
+                            }))
+                          }
                           className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500"
                         >
                           <option value="light">Light</option>
@@ -737,7 +790,9 @@ const ChatPage = () => {
 
             {/* HTML Formatting Options */}
             <div className="mb-4 p-3 bg-purple-50 rounded border border-purple-200">
-              <h4 className="text-sm font-semibold text-purple-900 mb-2">HTML Response Formatting</h4>
+              <h4 className="text-sm font-semibold text-purple-900 mb-2">
+                HTML Response Formatting
+              </h4>
               <label className="flex items-center">
                 <input
                   type="checkbox"
@@ -745,7 +800,9 @@ const ChatPage = () => {
                   onChange={(e) => setShowHTMLFormatInfo(e.target.checked)}
                   className="mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
                 />
-                <span className="text-sm text-purple-800">Show HTML format information</span>
+                <span className="text-sm text-purple-800">
+                  Show HTML format information
+                </span>
               </label>
               <p className="text-xs text-purple-600 ml-6">
                 Display technical details about HTML processing and formatting
@@ -873,7 +930,7 @@ const ChatPage = () => {
                   >
                     {/* Render HTML content for bot messages, plain text for user messages */}
                     {message.type === "bot" ? (
-                      <EnhancedHTMLContent 
+                      <EnhancedHTMLContent
                         content={message.content}
                         htmlContent={message.htmlContent}
                         preferHTML={true}
@@ -1101,7 +1158,8 @@ const ChatPage = () => {
               <span>
                 Model:{" "}
                 {useEnhancedAgent
-                  ? enhancedModels.find(m => m.id === agentModel)?.name || agentModel
+                  ? enhancedModels.find((m) => m.id === agentModel)?.name ||
+                    agentModel
                   : availableModels[
                       Object.keys(availableModels).find(
                         (key) => availableModels[key].id === selectedModel

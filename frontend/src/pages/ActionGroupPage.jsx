@@ -26,7 +26,7 @@ const ActionGroupPage = () => {
   const [currentParameter, setCurrentParameter] = useState({
     name: "",
     type: "string",
-    location: "path", // Changed default to 'path' since most APIs use path parameters
+    location: "path",
     required: false,
     description: "",
   });
@@ -36,12 +36,19 @@ const ActionGroupPage = () => {
   const [creationResult, setCreationResult] = useState(null);
   const [existingActionGroups, setExistingActionGroups] = useState([]);
   const [activeTab, setActiveTab] = useState("create");
-  const [editingActionGroup, setEditingActionGroup] = useState(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(null); // Track which action group is being deleted
+  const [editMode, setEditMode] = useState(false);
+  const [editActionGroupId, setEditActionGroupId] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(null);
   const [aliasName, setAliasName] = useState("");
   const [aliasError, setAliasError] = useState("");
   const [isToggling, setIsToggling] = useState(null);
+  const [latestAliasId, setLatestAliasId] = useState(null);
+  const [editingEndpointIndex, setEditingEndpointIndex] = useState(null);
+  const [isEditingEndpoint, setIsEditingEndpoint] = useState(false);
+
+  // Add these new state variables for parameter editing
+  const [editingParameterIndex, setEditingParameterIndex] = useState(null);
+  const [isEditingParameter, setIsEditingParameter] = useState(false);
 
   useEffect(() => {
     loadAgentInfo();
@@ -70,35 +77,96 @@ const ActionGroupPage = () => {
     }
   };
 
+  // Updated parameter functions
   const addParameter = () => {
     if (currentParameter.name.trim()) {
-      setCurrentEndpoint({
-        ...currentEndpoint,
-        parameters: [...currentEndpoint.parameters, { ...currentParameter }],
-      });
+      if (isEditingParameter && editingParameterIndex !== null) {
+        // Update existing parameter
+        const updatedParameters = [...currentEndpoint.parameters];
+        updatedParameters[editingParameterIndex] = { ...currentParameter };
+        setCurrentEndpoint({
+          ...currentEndpoint,
+          parameters: updatedParameters,
+        });
+
+        // Reset editing state
+        setIsEditingParameter(false);
+        setEditingParameterIndex(null);
+      } else {
+        // Add new parameter
+        setCurrentEndpoint({
+          ...currentEndpoint,
+          parameters: [...currentEndpoint.parameters, { ...currentParameter }],
+        });
+      }
+
+      // Reset current parameter form
       setCurrentParameter({
         name: "",
         type: "string",
-        location: "path", // Keep this improvement
+        location: "path",
         required: false,
         description: "",
       });
     }
   };
 
+  // New function to handle editing a parameter
+  const handleEditParameter = (index) => {
+    const parameterToEdit = currentEndpoint.parameters[index];
+    setCurrentParameter({ ...parameterToEdit });
+    setIsEditingParameter(true);
+    setEditingParameterIndex(index);
+  };
+
+  // New function to cancel parameter editing
+  const cancelEditParameter = () => {
+    setIsEditingParameter(false);
+    setEditingParameterIndex(null);
+    setCurrentParameter({
+      name: "",
+      type: "string",
+      location: "path",
+      required: false,
+      description: "",
+    });
+  };
+
   const removeParameter = (index) => {
+    // If we're editing this parameter, cancel the edit
+    if (isEditingParameter && editingParameterIndex === index) {
+      cancelEditParameter();
+    }
+
     setCurrentEndpoint({
       ...currentEndpoint,
       parameters: currentEndpoint.parameters.filter((_, i) => i !== index),
     });
   };
 
-  const addEndpoint = () => {
+  const addOrUpdateEndpoint = () => {
     if (currentEndpoint.path.trim() && currentEndpoint.description.trim()) {
-      setApiConfig({
-        ...apiConfig,
-        endpoints: [...apiConfig.endpoints, { ...currentEndpoint }],
-      });
+      if (isEditingEndpoint && editingEndpointIndex !== null) {
+        // Update existing endpoint
+        const updatedEndpoints = [...apiConfig.endpoints];
+        updatedEndpoints[editingEndpointIndex] = { ...currentEndpoint };
+        setApiConfig({
+          ...apiConfig,
+          endpoints: updatedEndpoints,
+        });
+
+        // Reset editing state
+        setIsEditingEndpoint(false);
+        setEditingEndpointIndex(null);
+      } else {
+        // Add new endpoint
+        setApiConfig({
+          ...apiConfig,
+          endpoints: [...apiConfig.endpoints, { ...currentEndpoint }],
+        });
+      }
+
+      // Reset current endpoint form
       setCurrentEndpoint({
         path: "",
         method: "GET",
@@ -107,13 +175,6 @@ const ActionGroupPage = () => {
         responseExample: "",
       });
     }
-  };
-
-  const removeEndpoint = (index) => {
-    setApiConfig({
-      ...apiConfig,
-      endpoints: apiConfig.endpoints.filter((_, i) => i !== index),
-    });
   };
 
   const validateConfiguration = () => {
@@ -237,82 +298,90 @@ const ActionGroupPage = () => {
     }
   };
 
-//  handleToggleActionGroup function 
-const handleToggleActionGroup = async (actionGroupId, currentState) => {
-  // Prevent multiple simultaneous operations
-  if (isToggling) {
-    console.log("Another operation in progress, skipping...");
-    return;
-  }
-
-  setIsToggling(actionGroupId);
-  
-  try {
-    let response;
-    const isCurrentlyEnabled = currentState === "ENABLED";
-    
-    console.log(`Action Group: ${actionGroupId}, Current State: ${currentState}`);
-    
-    if (isCurrentlyEnabled) {
-      console.log(`Disabling action group: ${actionGroupId}`);
-      response = await actionGroupAPI.disableActionGroup(actionGroupId);
-    } else {
-      console.log(`Enabling action group: ${actionGroupId}`);
-      response = await actionGroupAPI.enableActionGroup(actionGroupId);
+  //  handleToggleActionGroup function
+  const handleToggleActionGroup = async (actionGroupId, currentState) => {
+    // Prevent multiple simultaneous operations
+    if (isToggling) {
+      console.log("Another operation in progress, skipping...");
+      return;
     }
 
-    console.log("API Response:", response);
+    setIsToggling(actionGroupId);
 
-    if (response && response.success) {
-      // Wait a moment for AWS changes to propagate
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Refresh the action groups list to reflect changes
-      await loadExistingActionGroups();
-      
-      const action = isCurrentlyEnabled ? "disabled" : "enabled";
-      // FIXED: Updated success messages to reflect correct behavior
-      const message = isCurrentlyEnabled 
-        ? "Action group disabled successfully" 
-        : "Action group enabled successfully";
-      
-      // Optional: Show a more informative success message
-      alert(`✅ ${message}\n\nNote: Multiple action groups can be enabled simultaneously for full agent capabilities.`);
-    } else {
-      throw new Error(response?.error || response?.message || "Unknown error occurred");
-    }
-  } catch (error) {
-    console.error("Toggle action group error:", error);
-    
-    let errorMessage = `Failed to ${currentState === "ENABLED" ? "disable" : "enable"} action group: `;
-    
-    // Handle different types of errors
-    if (error.response?.status === 404) {
-      errorMessage += "Action group not found. It may have been deleted.";
-      // Refresh the list to remove stale entries
-      await loadExistingActionGroups();
-    } else if (error.response?.data?.message) {
-      errorMessage += error.response.data.message;
-    } else if (error.response?.data?.error) {
-      errorMessage += error.response.data.error;
-    } else if (error.message) {
-      errorMessage += error.message;
-    } else {
-      errorMessage += "Unknown error occurred";
-    }
-    
-    alert(`❌ ${errorMessage}`);
-    
-    // Refresh the list anyway to get current state
     try {
-      await loadExistingActionGroups();
-    } catch (refreshError) {
-      console.error("Failed to refresh action groups list:", refreshError);
+      let response;
+      const isCurrentlyEnabled = currentState === "ENABLED";
+
+      console.log(
+        `Action Group: ${actionGroupId}, Current State: ${currentState}`
+      );
+
+      if (isCurrentlyEnabled) {
+        console.log(`Disabling action group: ${actionGroupId}`);
+        response = await actionGroupAPI.disableActionGroup(actionGroupId);
+      } else {
+        console.log(`Enabling action group: ${actionGroupId}`);
+        response = await actionGroupAPI.enableActionGroup(actionGroupId);
+      }
+
+      console.log("API Response:", response);
+
+      if (response && response.success) {
+        // Wait a moment for AWS changes to propagate
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        // Refresh the action groups list to reflect changes
+        await loadExistingActionGroups();
+
+        const action = isCurrentlyEnabled ? "disabled" : "enabled";
+        // Updated success messages to reflect correct behavior
+        const message = isCurrentlyEnabled
+          ? "Action group disabled successfully"
+          : "Action group enabled successfully";
+
+        // Optional: Show a more informative success message
+        alert(
+          `✅ ${message}\n\nNote: Multiple action groups can be enabled simultaneously for full agent capabilities.`
+        );
+      } else {
+        throw new Error(
+          response?.error || response?.message || "Unknown error occurred"
+        );
+      }
+    } catch (error) {
+      console.error("Toggle action group error:", error);
+
+      let errorMessage = `Failed to ${
+        currentState === "ENABLED" ? "disable" : "enable"
+      } action group: `;
+
+      // Handle different types of errors
+      if (error.response?.status === 404) {
+        errorMessage += "Action group not found. It may have been deleted.";
+        // Refresh the list to remove stale entries
+        await loadExistingActionGroups();
+      } else if (error.response?.data?.message) {
+        errorMessage += error.response.data.message;
+      } else if (error.response?.data?.error) {
+        errorMessage += error.response.data.error;
+      } else if (error.message) {
+        errorMessage += error.message;
+      } else {
+        errorMessage += "Unknown error occurred";
+      }
+
+      alert(`❌ ${errorMessage}`);
+
+      // Refresh the list anyway to get current state
+      try {
+        await loadExistingActionGroups();
+      } catch (refreshError) {
+        console.error("Failed to refresh action groups list:", refreshError);
+      }
+    } finally {
+      setIsToggling(null);
     }
-  } finally {
-    setIsToggling(null);
-  }
-};
+  };
 
   const handleDeleteActionGroup = async (actionGroupId) => {
     const actionGroup = existingActionGroups.find(
@@ -358,24 +427,142 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
 
   const handleEditActionGroup = async (actionGroupId) => {
     try {
-      const response = await actionGroupAPI.getActionGroup(actionGroupId);
-      if (response.success) {
-        setEditingActionGroup(response.data);
-        setIsEditing(true);
-        setActiveTab("create"); // Switch to create tab for editing
-
-        // Populate the form with existing data
-        // Note: This is a simplified version - you might need to parse the OpenAPI schema
-        // to reconstruct the original API configuration
-        alert(
-          "Edit functionality will be available in the next update. For now, you can create a new action group with updated configuration."
-        );
+      // Fetch editable config (includes apiConfig)
+      const response = await actionGroupAPI.getActionGroupConfig(actionGroupId);
+      if (response.success && response.data && response.data.apiConfig) {
+        setEditMode(true);
+        setEditActionGroupId(actionGroupId);
+        setActiveTab("create");
+        // Populate form fields with fetched config
+        setApiConfig(response.data.apiConfig);
+        setAliasName(response.data.apiConfig.aliasName || "");
+        setAliasError("");
       } else {
-        alert("Failed to load action group details: " + response.error);
+        alert(
+          "Failed to load action group details: " +
+            (response.error || "No editable config found")
+        );
       }
     } catch (error) {
       alert("Error loading action group: " + error.message);
     }
+  };
+
+  const handleSaveEditActionGroup = async () => {
+    const validationErrors = validateConfiguration();
+    // Alias validation
+    const aliasValidation = validateAliasName(aliasName);
+    if (aliasValidation) {
+      setAliasError(aliasValidation);
+      validationErrors.push("Alias name: " + aliasValidation);
+    } else {
+      setAliasError("");
+    }
+    if (validationErrors.length > 0) {
+      alert("Please fix the following errors:\n" + validationErrors.join("\n"));
+      return;
+    }
+    setIsCreating(true);
+    setCreationResult(null);
+    try {
+      // Prepare update payload (required params)
+      const updates = {
+        actionGroupName: apiConfig.apiName,
+        description: apiConfig.description,
+        apiConfig: { ...apiConfig, aliasName: aliasName.trim() },
+      };
+      // Use editActionGroupConfig for full config update
+      const response = await actionGroupAPI.editActionGroupConfig(
+        editActionGroupId,
+        updates
+      );
+      if (response.success) {
+        // --- If alias info is present, store it for chat usage ---
+        if (
+          response.data &&
+          response.data.alias &&
+          response.data.alias.aliasId
+        ) {
+          setLatestAliasId(response.data.alias.aliasId);
+          // Optionally, persist to localStorage for chat page
+          localStorage.setItem(
+            "bedrock_latest_alias_id",
+            response.data.alias.aliasId
+          );
+        }
+        setCreationResult({
+          success: true,
+          message: "Action Group updated successfully!",
+          data: response.data,
+        });
+        await loadExistingActionGroups();
+        setEditMode(false);
+        setEditActionGroupId(null);
+        setApiConfig({
+          apiName: "",
+          description: "",
+          baseUrl: "",
+          endpoints: [],
+          authentication: {
+            type: "none",
+            location: "header",
+            name: "",
+            value: "",
+          },
+        });
+        setAliasName("");
+        setAliasError("");
+      } else {
+        setCreationResult({
+          success: false,
+          message: response.error || "Failed to update action group",
+        });
+      }
+    } catch (error) {
+      setCreationResult({
+        success: false,
+        message:
+          error.message || "An error occurred while updating the action group",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // New function to handle editing an endpoint
+  const handleEditEndpoint = (index) => {
+    const endpointToEdit = apiConfig.endpoints[index];
+    setCurrentEndpoint({ ...endpointToEdit });
+    setIsEditingEndpoint(true);
+    setEditingEndpointIndex(index);
+
+    // Scroll to the endpoint form
+    const endpointForm = document.querySelector(".endpoint-form");
+    if (endpointForm) {
+      endpointForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  // New function to cancel editing
+  const cancelEditEndpoint = () => {
+    setIsEditingEndpoint(false);
+    setEditingEndpointIndex(null);
+    setIsEditingParameter(false);
+    setEditingParameterIndex(null);
+    setCurrentEndpoint({
+      path: "",
+      method: "GET",
+      description: "",
+      parameters: [],
+      responseExample: "",
+    });
+    setCurrentParameter({
+      name: "",
+      type: "string",
+      location: "path",
+      required: false,
+      description: "",
+    });
   };
 
   return (
@@ -691,9 +878,31 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                 Step 2: Endpoints Configuration
               </h2>
 
-              {/* Add New Endpoint Form */}
-              <div className="border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50">
-                <h3 className="font-medium mb-3">Add New Endpoint</h3>
+              {/* Add/Edit Endpoint Form */}
+              <div className="endpoint-form border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50">
+                <h3 className="font-medium mb-3">
+                  {isEditingEndpoint ? "Edit Endpoint" : "Add New Endpoint"}
+                </h3>
+
+                {/* Show editing indicator */}
+                {isEditingEndpoint && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-blue-800">
+                          Editing endpoint:{" "}
+                        <strong>
+                          {currentEndpoint.method} {currentEndpoint.path}
+                        </strong>
+                      </span>
+                      <button
+                        onClick={cancelEditEndpoint}
+                        className="text-sm text-blue-600 hover:text-blue-800 underline"
+                      >
+                        Cancel Edit
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   <div>
@@ -763,7 +972,7 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                   <div className="border-2 border-dashed border-blue-200 rounded-lg p-4 bg-blue-50">
                     <div className="flex items-center justify-between mb-3">
                       <h5 className="font-medium text-blue-800">
-                        Add Parameter
+                        {isEditingParameter ? "Edit Parameter" : "Add Parameter"}
                       </h5>
                       {currentEndpoint.path.includes("{") &&
                         currentEndpoint.path.includes("}") && (
@@ -772,6 +981,24 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                           </span>
                         )}
                     </div>
+
+                    {/* Show parameter editing indicator */}
+                    {isEditingParameter && (
+                      <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-yellow-800">
+                              Editing parameter:{" "}
+                            <strong>{currentParameter.name}</strong>
+                          </span>
+                          <button
+                            onClick={cancelEditParameter}
+                            className="text-sm text-yellow-600 hover:text-yellow-800 underline"
+                          >
+                            Cancel Edit
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-6 gap-2 mb-3">
                       <input
@@ -852,18 +1079,19 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                         disabled={!currentParameter.name.trim()}
                         className={`px-4 py-2 rounded font-medium transition-colors ${
                           currentParameter.name.trim()
-                            ? "bg-blue-600 text-white hover:bg-blue-700"
+                            ? isEditingParameter
+                              ? "bg-blue-600 text-white hover:bg-blue-700"
+                              : "bg-blue-600 text-white hover:bg-blue-700"
                             : "bg-gray-300 text-gray-500 cursor-not-allowed"
                         }`}
                       >
-                        + Add Parameter
+                        {isEditingParameter ? "💾 Update Parameter" : "+ Add Parameter"}
                       </button>
                     </div>
 
                     {currentParameter.name.trim() && (
                       <div className="text-sm text-blue-600 mb-2">
-                        💡 Click "Add Parameter" to save this parameter, then
-                        add more if needed
+                        💡 Click "{isEditingParameter ? "Update Parameter" : "Add Parameter"}" to save this parameter, then add more if needed
                       </div>
                     )}
                   </div>
@@ -873,15 +1101,18 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                     <div className="mt-4">
                       <div className="flex items-center gap-2 mb-2">
                         <h5 className="font-medium text-green-700">
-                          ✅ Added Parameters (
-                          {currentEndpoint.parameters.length})
+                          ✅ Added Parameters ({currentEndpoint.parameters.length})
                         </h5>
                       </div>
                       <div className="space-y-2">
                         {currentEndpoint.parameters.map((param, index) => (
                           <div
                             key={index}
-                            className="flex items-center justify-between bg-green-50 border border-green-200 p-3 rounded"
+                            className={`flex items-center justify-between p-3 rounded border ${
+                              isEditingParameter && editingParameterIndex === index
+                                ? "bg-yellow-50 border-yellow-200"
+                                : "bg-green-50 border-green-200"
+                            }`}
                           >
                             <span className="text-sm">
                               <span className="font-medium text-green-800">
@@ -898,13 +1129,36 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                                   - {param.description}
                                 </span>
                               )}
+                              {isEditingParameter && editingParameterIndex === index && (
+                                <span className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs">
+                                  Currently Editing
+                                </span>
+                              )}
                             </span>
-                            <button
-                              onClick={() => removeParameter(index)}
-                              className="text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50"
-                            >
-                              Remove
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleEditParameter(index)}
+                                disabled={isEditingParameter}
+                                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                  isEditingParameter
+                                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                                    : "bg-blue-500 text-white hover:bg-blue-600"
+                                }`}
+                              >
+                                  Edit
+                              </button>
+                              <button
+                                onClick={() => removeParameter(index)}
+                                disabled={isEditingParameter}
+                                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                  isEditingParameter
+                                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                                    : "text-red-500 hover:text-red-700 hover:bg-red-50"
+                                }`}
+                              >
+                                Remove
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -917,8 +1171,7 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                           currentEndpoint.path.includes("}") && (
                             <span className="font-medium">
                               {" "}
-                              Your URL path contains parameters - make sure to
-                              add them above!
+                              Your URL path contains parameters - make sure to add them above!
                             </span>
                           )}
                       </div>
@@ -965,7 +1218,7 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
 
                   <button
                     type="button"
-                    onClick={addEndpoint}
+                    onClick={addOrUpdateEndpoint}
                     disabled={
                       !currentEndpoint.path.trim() ||
                       !currentEndpoint.description.trim()
@@ -973,11 +1226,15 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                     className={`px-6 py-3 rounded font-medium transition-colors ${
                       currentEndpoint.path.trim() &&
                       currentEndpoint.description.trim()
-                        ? "bg-green-600 text-white hover:bg-green-700"
+                        ? isEditingEndpoint
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "bg-green-600 text-white hover:bg-green-700"
                         : "bg-gray-300 text-gray-500 cursor-not-allowed"
                     }`}
                   >
-                    ✅ Add Endpoint
+                    {isEditingEndpoint
+                      ? "💾 Update Endpoint"
+                      : "✅ Add Endpoint"}
                     {currentEndpoint.parameters.length > 0 && (
                       <span className="ml-2 px-2 py-1 bg-green-500 text-green-100 rounded text-sm">
                         {currentEndpoint.parameters.length} param
@@ -988,7 +1245,7 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                 </div>
               </div>
 
-              {/* Endpoints List */}
+              {/* Configured Endpoints List */}
               {apiConfig.endpoints.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="font-medium text-green-700">
@@ -997,7 +1254,11 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                   {apiConfig.endpoints.map((endpoint, index) => (
                     <div
                       key={index}
-                      className="border border-green-200 rounded-lg p-4 bg-green-50"
+                      className={`border rounded-lg p-4 ${
+                        isEditingEndpoint && editingEndpointIndex === index
+                          ? "border-blue-300 bg-blue-50"
+                          : "border-green-200 bg-green-50"
+                      }`}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
@@ -1011,13 +1272,37 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                               {endpoint.parameters.length !== 1 ? "s" : ""}
                             </span>
                           )}
+                          {isEditingEndpoint &&
+                            editingEndpointIndex === index && (
+                              <span className="inline-block bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium">
+                                Currently Editing
+                              </span>
+                            )}
                         </div>
-                        <button
-                          onClick={() => removeEndpoint(index)}
-                          className="text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50"
-                        >
-                          Remove
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleEditEndpoint(index)}
+                            disabled={isEditingEndpoint}
+                            className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                              isEditingEndpoint
+                                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                                : "bg-blue-500 text-white hover:bg-blue-600"
+                            }`}
+                          >
+                              Edit
+                          </button>
+                          <button
+                            onClick={() => removeEndpoint(index)}
+                            disabled={isEditingEndpoint}
+                            className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                              isEditingEndpoint
+                                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                                : "text-red-500 hover:text-red-700 hover:bg-red-50"
+                            }`}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
                       <p className="text-sm text-gray-600 mb-2">
                         {endpoint.description}
@@ -1050,7 +1335,7 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
           <div className="card">
             <div className="p-6">
               <h2 className="text-xl font-semibold mb-4">
-                Step 3: Create Action Group
+                Step 3: {editMode ? "Update" : "Create"} Action Group
               </h2>
               {/* Progress Summary */}
               <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -1167,15 +1452,20 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-semibold">
-                    Ready to Create Action Group?
+                    Ready to {editMode ? "Update" : "Create"} Action Group?
                   </h3>
                   <p className="text-sm text-gray-600">
-                    This will automatically generate OpenAPI schema and create
-                    the action group in AWS Bedrock.
+                    This will automatically generate OpenAPI schema and{" "}
+                    {editMode ? "update" : "create"} the action group in AWS
+                    Bedrock.
                   </p>
                 </div>
                 <button
-                  onClick={handleCreateActionGroup}
+                  onClick={
+                    editMode
+                      ? handleSaveEditActionGroup
+                      : handleCreateActionGroup
+                  }
                   disabled={
                     isCreating ||
                     !agentInfo ||
@@ -1209,8 +1499,10 @@ const handleToggleActionGroup = async (actionGroupId, currentState) => {
                           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                         />
                       </svg>
-                      Creating...
+                      {editMode ? "Updating..." : "Creating..."}
                     </span>
+                  ) : editMode ? (
+                    "💾 Update Action Group"
                   ) : (
                     "🚀 Create Action Group"
                   )}

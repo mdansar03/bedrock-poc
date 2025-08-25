@@ -219,12 +219,12 @@ export const agentAPI = {
     history = {
       enabled: true,
       maxMessages: 6,
-      contextWeight: "balanced"
+      contextWeight: "balanced",
     },
     dataSources = {
       websites: [],
       pdfs: [],
-      documents: []
+      documents: [],
     },
     options = {
       useEnhancement: true
@@ -550,8 +550,17 @@ export const actionGroupAPI = {
     return response.data;
   },
 
-  // Update action group
+  // Update action group state (enable/disable only)
   updateActionGroup: async (actionGroupId, updates) => {
+    // Only for enable/disable, not full config edit
+    const response = await api.put(`/action-groups/${actionGroupId}`, updates);
+    return response.data;
+  },
+
+  // Edit/update full action group config
+  editActionGroupConfig: async (actionGroupId, updates) => {
+    // For full config edit (apiConfig, etc.)
+    // Response will include .alias if a new alias was created
     const response = await api.put(`/action-groups/${actionGroupId}`, updates);
     return response.data;
   },

@@ -479,44 +479,44 @@ router.get("/schema", async (req, res) => {
         properties: {
           actionGroupId: {
             type: "string",
-            description: "Action group identifier"
+            description: "Action group identifier",
           },
           actionGroupName: {
             type: "string",
-            description: "Action group name"
+            description: "Action group name",
           },
           description: {
             type: "string",
-            description: "Action group description"
+            description: "Action group description",
           },
           actionGroupState: {
             type: "string",
             enum: ["ENABLED", "DISABLED"],
-            description: "Action group state"
+            description: "Action group state",
           },
           createdAt: {
             type: "string",
             format: "date-time",
-            description: "Creation timestamp"
+            description: "Creation timestamp",
           },
           updatedAt: {
             type: "string",
             format: "date-time",
-            description: "Last update timestamp"
+            description: "Last update timestamp",
           },
           agentId: {
             type: "string",
-            description: "Associated agent ID"
+            description: "Associated agent ID",
           },
           lambdaArn: {
             type: "string",
-            description: "Lambda function ARN for execution"
+            description: "Lambda function ARN for execution",
           },
           apiSchema: {
             type: "object",
-            description: "OpenAPI schema for the action group"
-          }
-        }
+            description: "OpenAPI schema for the action group",
+          },
+        },
       },
       ApiConfiguration: {
         type: "object",
@@ -525,16 +525,16 @@ router.get("/schema", async (req, res) => {
           apiName: {
             type: "string",
             description: "Name of the API",
-            example: "Order Tracking API"
+            example: "Order Tracking API",
           },
           description: {
             type: "string",
-            description: "API description"
+            description: "API description",
           },
           baseUrl: {
             type: "string",
             format: "uri",
-            description: "Base URL of the API"
+            description: "Base URL of the API",
           },
           endpoints: {
             type: "array",
@@ -543,35 +543,35 @@ router.get("/schema", async (req, res) => {
               properties: {
                 path: {
                   type: "string",
-                  description: "API endpoint path"
+                  description: "API endpoint path",
                 },
                 method: {
                   type: "string",
-                  enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                  enum: ["GET", "POST", "PUT", "DELETE", "PATCH"],
                 },
                 description: {
-                  type: "string"
+                  type: "string",
                 },
                 parameters: {
                   type: "array",
                   items: {
-                    type: "object"
-                  }
-                }
-              }
-            }
+                    type: "object",
+                  },
+                },
+              },
+            },
           },
           authentication: {
             type: "object",
             properties: {
               type: {
                 type: "string",
-                enum: ["none", "apiKey", "bearer", "basic"]
-              }
-            }
-          }
-        }
-      }
+                enum: ["none", "apiKey", "bearer", "basic"],
+              },
+            },
+          },
+        },
+      },
     };
 
     const endpoints = [
@@ -590,7 +590,7 @@ router.get("/schema", async (req, res) => {
       "GET /api/action-groups/schema - Get schema definitions",
       "GET /api/action-groups/data - Get comprehensive data",
       "GET /api/action-groups/templates - Get configuration templates",
-      "GET /api/action-groups/aliases/latest - Get latest agent alias"
+      "GET /api/action-groups/aliases/latest - Get latest agent alias",
     ];
 
     res.json({
@@ -599,16 +599,15 @@ router.get("/schema", async (req, res) => {
         schemas,
         version: "1.0.0",
         endpoints,
-        lastUpdated: new Date().toISOString()
-      }
+        lastUpdated: new Date().toISOString(),
+      },
     });
-
   } catch (error) {
     logger.error("Error getting action group schema:", error);
     res.status(500).json({
       success: false,
       error: "Failed to get action group schema",
-      message: error.message
+      message: error.message,
     });
   }
 });
@@ -689,17 +688,21 @@ router.get("/data", async (req, res) => {
     if (includeStatsFlag) {
       const now = new Date();
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      
+
       statistics = {
         totalActionGroups: actionGroups.length,
-        enabledCount: actionGroups.filter(ag => ag.actionGroupState === "ENABLED").length,
-        disabledCount: actionGroups.filter(ag => ag.actionGroupState === "DISABLED").length,
-        recentlyCreated: actionGroups.filter(ag => {
+        enabledCount: actionGroups.filter(
+          (ag) => ag.actionGroupState === "ENABLED"
+        ).length,
+        disabledCount: actionGroups.filter(
+          (ag) => ag.actionGroupState === "DISABLED"
+        ).length,
+        recentlyCreated: actionGroups.filter((ag) => {
           const createdAt = new Date(ag.createdAt || ag.updatedAt || 0);
           return createdAt > sevenDaysAgo;
         }).length,
         averageExecutionsPerDay: 0, // Would need execution tracking to calculate
-        lastCalculated: now.toISOString()
+        lastCalculated: now.toISOString(),
       };
     }
 
@@ -710,12 +713,16 @@ router.get("/data", async (req, res) => {
     const enhancedActionGroups = await Promise.all(
       actionGroups.map(async (ag) => {
         const enhanced = { ...ag };
-        
+
         if (includeHistoryFlag) {
           try {
-            const history = await actionGroupService.getExecutionHistory(ag.actionGroupId, 5);
+            const history = await actionGroupService.getExecutionHistory(
+              ag.actionGroupId,
+              5
+            );
             enhanced.recentExecutions = history.length;
-            enhanced.lastExecution = history.length > 0 ? history[0].timestamp : null;
+            enhanced.lastExecution =
+              history.length > 0 ? history[0].timestamp : null;
           } catch (error) {
             enhanced.recentExecutions = 0;
             enhanced.lastExecution = null;
@@ -723,8 +730,9 @@ router.get("/data", async (req, res) => {
         }
 
         // Add health status
-        enhanced.healthStatus = ag.actionGroupState === "ENABLED" ? "healthy" : "disabled";
-        
+        enhanced.healthStatus =
+          ag.actionGroupState === "ENABLED" ? "healthy" : "disabled";
+
         return enhanced;
       })
     );
@@ -733,7 +741,7 @@ router.get("/data", async (req, res) => {
       status: agentInfo.status === "UNKNOWN" ? "warning" : "healthy",
       lastCheck: new Date().toISOString(),
       agentConfigured: agentInfo.configured,
-      totalEndpoints: 16 // Number of available endpoints
+      totalEndpoints: 16, // Number of available endpoints
     };
 
     res.json({
@@ -746,17 +754,16 @@ router.get("/data", async (req, res) => {
         metadata: {
           generatedAt: new Date().toISOString(),
           includeStats: includeStatsFlag,
-          includeHistory: includeHistoryFlag
-        }
-      }
+          includeHistory: includeHistoryFlag,
+        },
+      },
     });
-
   } catch (error) {
     logger.error("Error getting comprehensive action groups data:", error);
     res.status(500).json({
       success: false,
       error: "Failed to get comprehensive data",
-      message: error.message
+      message: error.message,
     });
   }
 });
@@ -828,10 +835,11 @@ router.get("/templates", async (req, res) => {
                   type: "integer",
                   location: "query",
                   required: false,
-                  description: "Maximum number of items to return"
-                }
+                  description: "Maximum number of items to return",
+                },
               ],
-              responseExample: '{"items": [{"id": 1, "name": "Item 1"}], "total": 1}'
+              responseExample:
+                '{"items": [{"id": 1, "name": "Item 1"}], "total": 1}',
             },
             {
               path: "/items/{id}",
@@ -843,21 +851,23 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Item ID"
-                }
+                  description: "Item ID",
+                },
               ],
-              responseExample: '{"id": "1", "name": "Item 1", "status": "active"}'
-            }
+              responseExample:
+                '{"id": "1", "name": "Item 1", "status": "active"}',
+            },
           ],
           authentication: {
-            type: "none"
-          }
-        }
+            type: "none",
+          },
+        },
       },
       ecommerce: {
         name: "E-commerce Order Tracking",
         category: "ecommerce",
-        description: "Order tracking and management API for e-commerce platforms",
+        description:
+          "Order tracking and management API for e-commerce platforms",
         config: {
           apiName: "E-commerce Order API",
           description: "API for tracking orders, payments, and shipments",
@@ -873,10 +883,11 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Order ID to track"
-                }
+                  description: "Order ID to track",
+                },
               ],
-              responseExample: '{"orderId": "ORD123", "status": "shipped", "items": 3, "total": 299.99}'
+              responseExample:
+                '{"orderId": "ORD123", "status": "shipped", "items": 3, "total": 299.99}',
             },
             {
               path: "/orders/{orderId}/status",
@@ -888,19 +899,20 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Order ID"
-                }
+                  description: "Order ID",
+                },
               ],
-              responseExample: '{"status": "shipped", "trackingNumber": "TR123456", "estimatedDelivery": "2024-01-25"}'
-            }
+              responseExample:
+                '{"status": "shipped", "trackingNumber": "TR123456", "estimatedDelivery": "2024-01-25"}',
+            },
           ],
           authentication: {
             type: "apiKey",
             location: "header",
             name: "X-API-Key",
-            value: "your-api-key-here"
-          }
-        }
+            value: "your-api-key-here",
+          },
+        },
       },
       social: {
         name: "Social Media Analytics",
@@ -921,10 +933,11 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Social media post ID"
-                }
+                  description: "Social media post ID",
+                },
               ],
-              responseExample: '{"likes": 150, "shares": 25, "comments": 30, "reach": 5000}'
+              responseExample:
+                '{"likes": 150, "shares": 25, "comments": 30, "reach": 5000}',
             },
             {
               path: "/user/{userId}/engagement",
@@ -936,19 +949,20 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "User ID"
-                }
+                  description: "User ID",
+                },
               ],
-              responseExample: '{"totalPosts": 45, "avgLikes": 120, "followerGrowth": 15}'
-            }
+              responseExample:
+                '{"totalPosts": 45, "avgLikes": 120, "followerGrowth": 15}',
+            },
           ],
           authentication: {
             type: "bearer",
             location: "header",
             name: "Authorization",
-            value: "your-bearer-token-here"
-          }
-        }
+            value: "your-bearer-token-here",
+          },
+        },
       },
       financial: {
         name: "Financial Transactions",
@@ -969,10 +983,11 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Account ID"
-                }
+                  description: "Account ID",
+                },
               ],
-              responseExample: '{"accountId": "ACC123", "balance": 2500.00, "currency": "USD"}'
+              responseExample:
+                '{"accountId": "ACC123", "balance": 2500.00, "currency": "USD"}',
             },
             {
               path: "/transactions/{transactionId}",
@@ -984,20 +999,21 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Transaction ID"
-                }
+                  description: "Transaction ID",
+                },
               ],
-              responseExample: '{"id": "TXN456", "amount": -50.00, "merchant": "Coffee Shop", "date": "2024-01-20"}'
-            }
+              responseExample:
+                '{"id": "TXN456", "amount": -50.00, "merchant": "Coffee Shop", "date": "2024-01-20"}',
+            },
           ],
           authentication: {
             type: "apiKey",
             location: "header",
             name: "X-Bank-API-Key",
-            value: "secure-bank-api-key"
-          }
-        }
-      }
+            value: "secure-bank-api-key",
+          },
+        },
+      },
     };
 
     let templates = [];
@@ -1009,7 +1025,7 @@ router.get("/templates", async (req, res) => {
       return res.status(400).json({
         success: false,
         error: "Invalid template type",
-        validTypes: Object.keys(allTemplates).concat(["all"])
+        validTypes: Object.keys(allTemplates).concat(["all"]),
       });
     }
 
@@ -1019,16 +1035,15 @@ router.get("/templates", async (req, res) => {
         templates,
         availableTypes: Object.keys(allTemplates),
         totalTemplates: templates.length,
-        generatedAt: new Date().toISOString()
-      }
+        generatedAt: new Date().toISOString(),
+      },
     });
-
   } catch (error) {
     logger.error("Error getting action group templates:", error);
     res.status(500).json({
       success: false,
       error: "Failed to get templates",
-      message: error.message
+      message: error.message,
     });
   }
 });
@@ -1131,13 +1146,16 @@ router.get(
   async (req, res) => {
     try {
       const { actionGroupId } = req.params;
-      
+
       // Direct AWS API call to see raw response
-      const { BedrockAgentClient, GetAgentActionGroupCommand } = require("@aws-sdk/client-bedrock-agent");
+      const {
+        BedrockAgentClient,
+        GetAgentActionGroupCommand,
+      } = require("@aws-sdk/client-bedrock-agent");
       const client = new BedrockAgentClient({
         region: process.env.AWS_REGION || "us-east-1",
       });
-      
+
       const command = new GetAgentActionGroupCommand({
         agentId: process.env.BEDROCK_AGENT_ID,
         agentVersion: "DRAFT",
@@ -1145,28 +1163,38 @@ router.get(
       });
 
       const rawResponse = await client.send(command);
-      
+
       res.json({
         success: true,
         data: {
           actionGroupId: actionGroupId,
           rawResponse: rawResponse,
           responseKeys: Object.keys(rawResponse),
-          actionGroupKeys: rawResponse.actionGroup ? Object.keys(rawResponse.actionGroup) : null,
-          hasApiSchema: !!(rawResponse.actionGroup && rawResponse.actionGroup.apiSchema),
-          hasActionGroupExecutor: !!(rawResponse.actionGroup && rawResponse.actionGroup.actionGroupExecutor),
-          apiSchema: rawResponse.actionGroup ? rawResponse.actionGroup.apiSchema : null,
-          actionGroupExecutor: rawResponse.actionGroup ? rawResponse.actionGroup.actionGroupExecutor : null
-        }
+          actionGroupKeys: rawResponse.actionGroup
+            ? Object.keys(rawResponse.actionGroup)
+            : null,
+          hasApiSchema: !!(
+            rawResponse.actionGroup && rawResponse.actionGroup.apiSchema
+          ),
+          hasActionGroupExecutor: !!(
+            rawResponse.actionGroup &&
+            rawResponse.actionGroup.actionGroupExecutor
+          ),
+          apiSchema: rawResponse.actionGroup
+            ? rawResponse.actionGroup.apiSchema
+            : null,
+          actionGroupExecutor: rawResponse.actionGroup
+            ? rawResponse.actionGroup.actionGroupExecutor
+            : null,
+        },
       });
-      
     } catch (error) {
       logger.error("Error in debug endpoint:", error);
       res.status(500).json({
         success: false,
         error: "Debug failed",
         message: error.message,
-        stack: error.stack
+        stack: error.stack,
       });
     }
   }
@@ -1232,13 +1260,16 @@ router.get(
       }
 
       const { actionGroupId } = req.params;
-      
+
       // Use the exact same direct AWS call as the working debug endpoint
-      const { BedrockAgentClient, GetAgentActionGroupCommand } = require("@aws-sdk/client-bedrock-agent");
+      const {
+        BedrockAgentClient,
+        GetAgentActionGroupCommand,
+      } = require("@aws-sdk/client-bedrock-agent");
       const client = new BedrockAgentClient({
         region: process.env.AWS_REGION || "us-east-1",
       });
-      
+
       const command = new GetAgentActionGroupCommand({
         agentId: process.env.BEDROCK_AGENT_ID,
         agentVersion: "DRAFT",
@@ -1247,50 +1278,51 @@ router.get(
 
       let rawResponse;
       let actionGroup;
-      
+
       try {
         rawResponse = await client.send(command);
         actionGroup = rawResponse.agentActionGroup; // AWS returns 'agentActionGroup' not 'actionGroup'
-        
+
         logger.info(`AWS response for ${actionGroupId}:`, {
           hasResponse: !!rawResponse,
           responseKeys: rawResponse ? Object.keys(rawResponse) : null,
           hasActionGroup: !!actionGroup,
-          actionGroupKeys: actionGroup ? Object.keys(actionGroup) : null
+          actionGroupKeys: actionGroup ? Object.keys(actionGroup) : null,
         });
-        
       } catch (awsError) {
         logger.error(`AWS API error for ${actionGroupId}:`, {
           errorName: awsError.name,
           errorMessage: awsError.message,
-          errorCode: awsError.$metadata?.httpStatusCode
+          errorCode: awsError.$metadata?.httpStatusCode,
         });
         return res.status(500).json({
           success: false,
           error: "Failed to retrieve action group from AWS",
-          message: awsError.message
+          message: awsError.message,
         });
       }
-      
+
       if (!actionGroup) {
         logger.warn(`Action group ${actionGroupId} not found in AWS response`);
         return res.status(404).json({
           success: false,
           error: "Action group not found",
-          rawResponse: rawResponse // Add for debugging
+          rawResponse: rawResponse, // Add for debugging
         });
       }
 
       let openApiSchema = null;
       let debugInfo = {};
-      
+
       // Debug: Log the full action group structure
       logger.info(`Action group structure for ${actionGroupId}:`, {
         keys: Object.keys(actionGroup),
         hasApiSchema: !!actionGroup.apiSchema,
-        apiSchemaKeys: actionGroup.apiSchema ? Object.keys(actionGroup.apiSchema) : null
+        apiSchemaKeys: actionGroup.apiSchema
+          ? Object.keys(actionGroup.apiSchema)
+          : null,
       });
-      
+
       // Try to extract the OpenAPI schema from the action group
       if (actionGroup.apiSchema && actionGroup.apiSchema.payload) {
         try {
@@ -1298,24 +1330,37 @@ router.get(
           debugInfo.parseSuccess = true;
           debugInfo.payloadLength = actionGroup.apiSchema.payload.length;
         } catch (error) {
-          logger.warn(`Failed to parse OpenAPI schema for action group ${actionGroupId}:`, error.message);
-          openApiSchema = { error: "Failed to parse schema", raw: actionGroup.apiSchema.payload };
+          logger.warn(
+            `Failed to parse OpenAPI schema for action group ${actionGroupId}:`,
+            error.message
+          );
+          openApiSchema = {
+            error: "Failed to parse schema",
+            raw: actionGroup.apiSchema.payload,
+          };
           debugInfo.parseError = error.message;
         }
       } else {
         // Check for alternative schema locations
         debugInfo.apiSchemaCheck = {
           hasApiSchema: !!actionGroup.apiSchema,
-          hasPayload: !!(actionGroup.apiSchema && actionGroup.apiSchema.payload),
+          hasPayload: !!(
+            actionGroup.apiSchema && actionGroup.apiSchema.payload
+          ),
           apiSchemaType: typeof actionGroup.apiSchema,
-          payloadType: actionGroup.apiSchema ? typeof actionGroup.apiSchema.payload : null
+          payloadType: actionGroup.apiSchema
+            ? typeof actionGroup.apiSchema.payload
+            : null,
         };
-        
+
         // Try alternative schema locations that might exist in AWS Bedrock
         if (actionGroup.functionSchema) {
           debugInfo.foundFunctionSchema = true;
           openApiSchema = actionGroup.functionSchema;
-        } else if (actionGroup.actionGroupExecutor && actionGroup.actionGroupExecutor.customControl) {
+        } else if (
+          actionGroup.actionGroupExecutor &&
+          actionGroup.actionGroupExecutor.customControl
+        ) {
           debugInfo.foundCustomControl = true;
         }
       }
@@ -1331,7 +1376,7 @@ router.get(
           retrievedAt: new Date().toISOString(),
           debugInfo: debugInfo,
           // Include raw action group data for debugging (remove in production)
-          rawActionGroup: actionGroup
+          rawActionGroup: actionGroup,
         },
       });
     } catch (error) {
@@ -1472,8 +1517,9 @@ router.put(
     param("actionGroupId")
       .notEmpty()
       .withMessage("Action group ID is required"),
-    // Remove actionGroupState validation since we have dedicated enable/disable routes
     body("description").optional().isString(),
+    body("actionGroupName").optional().isString(),
+    body("apiConfig").optional().isObject(),
   ],
   async (req, res) => {
     try {
@@ -1497,7 +1543,21 @@ router.put(
         );
       }
 
-      const result = await actionGroupService.updateActionGroup(
+      // If apiConfig is present, validate it
+      if (updates.apiConfig) {
+        const configValidation =
+          await actionGroupService.validateApiConfiguration(updates.apiConfig);
+        if (!configValidation.valid) {
+          return res.status(400).json({
+            success: false,
+            error: "API configuration validation failed",
+            details: configValidation.errors,
+          });
+        }
+      }
+
+      // Use the new editActionGroupConfig for full config update
+      const result = await actionGroupService.editActionGroupConfig(
         actionGroupId,
         updates
       );
@@ -1562,8 +1622,7 @@ router.post(
 
       res.json({
         success: true,
-        message: "Action group enabled successfully", // FIXED: Removed misleading message about disabling others
-        data: result,
+        message: "Action group enabled successfully", 
       });
     } catch (error) {
       logger.error(`Error enabling action group ${req.params.actionGroupId}:`, {
@@ -1588,7 +1647,6 @@ router.post(
     }
   }
 );
-
 
 /**
  * @swagger
@@ -2234,44 +2292,44 @@ router.get("/schema", async (req, res) => {
         properties: {
           actionGroupId: {
             type: "string",
-            description: "Action group identifier"
+            description: "Action group identifier",
           },
           actionGroupName: {
             type: "string",
-            description: "Action group name"
+            description: "Action group name",
           },
           description: {
             type: "string",
-            description: "Action group description"
+            description: "Action group description",
           },
           actionGroupState: {
             type: "string",
             enum: ["ENABLED", "DISABLED"],
-            description: "Action group state"
+            description: "Action group state",
           },
           createdAt: {
             type: "string",
             format: "date-time",
-            description: "Creation timestamp"
+            description: "Creation timestamp",
           },
           updatedAt: {
             type: "string",
             format: "date-time",
-            description: "Last update timestamp"
+            description: "Last update timestamp",
           },
           agentId: {
             type: "string",
-            description: "Associated agent ID"
+            description: "Associated agent ID",
           },
           lambdaArn: {
             type: "string",
-            description: "Lambda function ARN for execution"
+            description: "Lambda function ARN for execution",
           },
           apiSchema: {
             type: "object",
-            description: "OpenAPI schema for the action group"
-          }
-        }
+            description: "OpenAPI schema for the action group",
+          },
+        },
       },
       ApiConfiguration: {
         type: "object",
@@ -2280,16 +2338,16 @@ router.get("/schema", async (req, res) => {
           apiName: {
             type: "string",
             description: "Name of the API",
-            example: "Order Tracking API"
+            example: "Order Tracking API",
           },
           description: {
             type: "string",
-            description: "API description"
+            description: "API description",
           },
           baseUrl: {
             type: "string",
             format: "uri",
-            description: "Base URL of the API"
+            description: "Base URL of the API",
           },
           endpoints: {
             type: "array",
@@ -2298,35 +2356,35 @@ router.get("/schema", async (req, res) => {
               properties: {
                 path: {
                   type: "string",
-                  description: "API endpoint path"
+                  description: "API endpoint path",
                 },
                 method: {
                   type: "string",
-                  enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                  enum: ["GET", "POST", "PUT", "DELETE", "PATCH"],
                 },
                 description: {
-                  type: "string"
+                  type: "string",
                 },
                 parameters: {
                   type: "array",
                   items: {
-                    type: "object"
-                  }
-                }
-              }
-            }
+                    type: "object",
+                  },
+                },
+              },
+            },
           },
           authentication: {
             type: "object",
             properties: {
               type: {
                 type: "string",
-                enum: ["none", "apiKey", "bearer", "basic"]
-              }
-            }
-          }
-        }
-      }
+                enum: ["none", "apiKey", "bearer", "basic"],
+              },
+            },
+          },
+        },
+      },
     };
 
     const endpoints = [
@@ -2345,7 +2403,7 @@ router.get("/schema", async (req, res) => {
       "GET /api/action-groups/schema - Get schema definitions",
       "GET /api/action-groups/data - Get comprehensive data",
       "GET /api/action-groups/templates - Get configuration templates",
-      "GET /api/action-groups/aliases/latest - Get latest agent alias"
+      "GET /api/action-groups/aliases/latest - Get latest agent alias",
     ];
 
     res.json({
@@ -2354,16 +2412,15 @@ router.get("/schema", async (req, res) => {
         schemas,
         version: "1.0.0",
         endpoints,
-        lastUpdated: new Date().toISOString()
-      }
+        lastUpdated: new Date().toISOString(),
+      },
     });
-
   } catch (error) {
     logger.error("Error getting action group schema:", error);
     res.status(500).json({
       success: false,
       error: "Failed to get action group schema",
-      message: error.message
+      message: error.message,
     });
   }
 });
@@ -2444,17 +2501,21 @@ router.get("/data", async (req, res) => {
     if (includeStatsFlag) {
       const now = new Date();
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      
+
       statistics = {
         totalActionGroups: actionGroups.length,
-        enabledCount: actionGroups.filter(ag => ag.actionGroupState === "ENABLED").length,
-        disabledCount: actionGroups.filter(ag => ag.actionGroupState === "DISABLED").length,
-        recentlyCreated: actionGroups.filter(ag => {
+        enabledCount: actionGroups.filter(
+          (ag) => ag.actionGroupState === "ENABLED"
+        ).length,
+        disabledCount: actionGroups.filter(
+          (ag) => ag.actionGroupState === "DISABLED"
+        ).length,
+        recentlyCreated: actionGroups.filter((ag) => {
           const createdAt = new Date(ag.createdAt || ag.updatedAt || 0);
           return createdAt > sevenDaysAgo;
         }).length,
         averageExecutionsPerDay: 0, // Would need execution tracking to calculate
-        lastCalculated: now.toISOString()
+        lastCalculated: now.toISOString(),
       };
     }
 
@@ -2465,12 +2526,16 @@ router.get("/data", async (req, res) => {
     const enhancedActionGroups = await Promise.all(
       actionGroups.map(async (ag) => {
         const enhanced = { ...ag };
-        
+
         if (includeHistoryFlag) {
           try {
-            const history = await actionGroupService.getExecutionHistory(ag.actionGroupId, 5);
+            const history = await actionGroupService.getExecutionHistory(
+              ag.actionGroupId,
+              5
+            );
             enhanced.recentExecutions = history.length;
-            enhanced.lastExecution = history.length > 0 ? history[0].timestamp : null;
+            enhanced.lastExecution =
+              history.length > 0 ? history[0].timestamp : null;
           } catch (error) {
             enhanced.recentExecutions = 0;
             enhanced.lastExecution = null;
@@ -2478,8 +2543,9 @@ router.get("/data", async (req, res) => {
         }
 
         // Add health status
-        enhanced.healthStatus = ag.actionGroupState === "ENABLED" ? "healthy" : "disabled";
-        
+        enhanced.healthStatus =
+          ag.actionGroupState === "ENABLED" ? "healthy" : "disabled";
+
         return enhanced;
       })
     );
@@ -2488,7 +2554,7 @@ router.get("/data", async (req, res) => {
       status: agentInfo.status === "UNKNOWN" ? "warning" : "healthy",
       lastCheck: new Date().toISOString(),
       agentConfigured: agentInfo.configured,
-      totalEndpoints: 16 // Number of available endpoints
+      totalEndpoints: 16, // Number of available endpoints
     };
 
     res.json({
@@ -2501,17 +2567,16 @@ router.get("/data", async (req, res) => {
         metadata: {
           generatedAt: new Date().toISOString(),
           includeStats: includeStatsFlag,
-          includeHistory: includeHistoryFlag
-        }
-      }
+          includeHistory: includeHistoryFlag,
+        },
+      },
     });
-
   } catch (error) {
     logger.error("Error getting comprehensive action groups data:", error);
     res.status(500).json({
       success: false,
       error: "Failed to get comprehensive data",
-      message: error.message
+      message: error.message,
     });
   }
 });
@@ -2583,10 +2648,11 @@ router.get("/templates", async (req, res) => {
                   type: "integer",
                   location: "query",
                   required: false,
-                  description: "Maximum number of items to return"
-                }
+                  description: "Maximum number of items to return",
+                },
               ],
-              responseExample: '{"items": [{"id": 1, "name": "Item 1"}], "total": 1}'
+              responseExample:
+                '{"items": [{"id": 1, "name": "Item 1"}], "total": 1}',
             },
             {
               path: "/items/{id}",
@@ -2598,21 +2664,23 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Item ID"
-                }
+                  description: "Item ID",
+                },
               ],
-              responseExample: '{"id": "1", "name": "Item 1", "status": "active"}'
-            }
+              responseExample:
+                '{"id": "1", "name": "Item 1", "status": "active"}',
+            },
           ],
           authentication: {
-            type: "none"
-          }
-        }
+            type: "none",
+          },
+        },
       },
       ecommerce: {
         name: "E-commerce Order Tracking",
         category: "ecommerce",
-        description: "Order tracking and management API for e-commerce platforms",
+        description:
+          "Order tracking and management API for e-commerce platforms",
         config: {
           apiName: "E-commerce Order API",
           description: "API for tracking orders, payments, and shipments",
@@ -2628,10 +2696,11 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Order ID to track"
-                }
+                  description: "Order ID to track",
+                },
               ],
-              responseExample: '{"orderId": "ORD123", "status": "shipped", "items": 3, "total": 299.99}'
+              responseExample:
+                '{"orderId": "ORD123", "status": "shipped", "items": 3, "total": 299.99}',
             },
             {
               path: "/orders/{orderId}/status",
@@ -2643,19 +2712,20 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Order ID"
-                }
+                  description: "Order ID",
+                },
               ],
-              responseExample: '{"status": "shipped", "trackingNumber": "TR123456", "estimatedDelivery": "2024-01-25"}'
-            }
+              responseExample:
+                '{"status": "shipped", "trackingNumber": "TR123456", "estimatedDelivery": "2024-01-25"}',
+            },
           ],
           authentication: {
             type: "apiKey",
             location: "header",
             name: "X-API-Key",
-            value: "your-api-key-here"
-          }
-        }
+            value: "your-api-key-here",
+          },
+        },
       },
       social: {
         name: "Social Media Analytics",
@@ -2676,10 +2746,11 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Social media post ID"
-                }
+                  description: "Social media post ID",
+                },
               ],
-              responseExample: '{"likes": 150, "shares": 25, "comments": 30, "reach": 5000}'
+              responseExample:
+                '{"likes": 150, "shares": 25, "comments": 30, "reach": 5000}',
             },
             {
               path: "/user/{userId}/engagement",
@@ -2691,19 +2762,20 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "User ID"
-                }
+                  description: "User ID",
+                },
               ],
-              responseExample: '{"totalPosts": 45, "avgLikes": 120, "followerGrowth": 15}'
-            }
+              responseExample:
+                '{"totalPosts": 45, "avgLikes": 120, "followerGrowth": 15}',
+            },
           ],
           authentication: {
             type: "bearer",
             location: "header",
             name: "Authorization",
-            value: "your-bearer-token-here"
-          }
-        }
+            value: "your-bearer-token-here",
+          },
+        },
       },
       financial: {
         name: "Financial Transactions",
@@ -2724,10 +2796,11 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Account ID"
-                }
+                  description: "Account ID",
+                },
               ],
-              responseExample: '{"accountId": "ACC123", "balance": 2500.00, "currency": "USD"}'
+              responseExample:
+                '{"accountId": "ACC123", "balance": 2500.00, "currency": "USD"}',
             },
             {
               path: "/transactions/{transactionId}",
@@ -2739,20 +2812,21 @@ router.get("/templates", async (req, res) => {
                   type: "string",
                   location: "path",
                   required: true,
-                  description: "Transaction ID"
-                }
+                  description: "Transaction ID",
+                },
               ],
-              responseExample: '{"id": "TXN456", "amount": -50.00, "merchant": "Coffee Shop", "date": "2024-01-20"}'
-            }
+              responseExample:
+                '{"id": "TXN456", "amount": -50.00, "merchant": "Coffee Shop", "date": "2024-01-20"}',
+            },
           ],
           authentication: {
             type: "apiKey",
             location: "header",
             name: "X-Bank-API-Key",
-            value: "secure-bank-api-key"
-          }
-        }
-      }
+            value: "secure-bank-api-key",
+          },
+        },
+      },
     };
 
     let templates = [];
@@ -2764,7 +2838,7 @@ router.get("/templates", async (req, res) => {
       return res.status(400).json({
         success: false,
         error: "Invalid template type",
-        validTypes: Object.keys(allTemplates).concat(["all"])
+        validTypes: Object.keys(allTemplates).concat(["all"]),
       });
     }
 
@@ -2774,16 +2848,15 @@ router.get("/templates", async (req, res) => {
         templates,
         availableTypes: Object.keys(allTemplates),
         totalTemplates: templates.length,
-        generatedAt: new Date().toISOString()
-      }
+        generatedAt: new Date().toISOString(),
+      },
     });
-
   } catch (error) {
     logger.error("Error getting action group templates:", error);
     res.status(500).json({
       success: false,
       error: "Failed to get templates",
-      message: error.message
+      message: error.message,
     });
   }
 });

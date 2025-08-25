@@ -1613,6 +1613,21 @@ VIOLATION CONSEQUENCES: Providing information from unauthorized sources is a cri
       }
 
       // Prepare agent invocation parameters with TRUE streaming enabled
+      // Determine alias to use: explicit option > env var > latest available
+      let resolvedAliasId = options.agentAliasId || this.agentAliasId;
+      if (!resolvedAliasId || resolvedAliasId === "TSTALIASID") {
+        try {
+          const actionGroupService = require("./actionGroupService");
+          const latestAlias = await actionGroupService.getLatestAgentAlias();
+          if (latestAlias?.aliasId) {
+            resolvedAliasId = latestAlias.aliasId;
+            this.agentAliasId = latestAlias.aliasId; // cache for future calls
+          }
+        } catch (e) {
+          // Non-fatal; fall back to existing value
+        }
+      }
+
       const agentParams = {
         agentId: this.agentId,
         agentAliasId: options.agentAliasId, // Use the dynamically provided aliasId
