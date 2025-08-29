@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, X, Globe, FileText, File, Filter } from 'lucide-react';
-import { dataManagementAPI } from '../utils/api';
+import { ChevronDown, X, Globe, FileText, File, Filter, Grid } from 'lucide-react';
+import { bedrockStorageAPI } from '../utils/api';
 
 const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled = false }) => {
   const [availableDataSources, setAvailableDataSources] = useState({
     websites: [],
     pdfs: [],
-    documents: []
+    documents: [],
+    spreadsheets: []
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -19,15 +20,32 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
   const fetchAvailableDataSources = async () => {
     try {
       setLoading(true);
-      const response = await dataManagementAPI.getAvailableDataSources();
+      const response = await bedrockStorageAPI.getAllDatasources();
       
       if (response.success && response.data) {
-        const { dataSources } = response.data;
-        setAvailableDataSources({
-          websites: dataSources?.websites?.items || [],
-          pdfs: dataSources?.pdfs?.items || [],
-          documents: dataSources?.documents?.items || []
+        const { datasources } = response.data;
+        
+        // Group datasources by type
+        const groupedDataSources = {
+          websites: [],
+          pdfs: [],
+          documents: [],
+          spreadsheets: []
+        };
+        
+        datasources.forEach(datasource => {
+          const typeMapping = {
+            'web': 'websites',
+            'pdf': 'pdfs', 
+            'doc': 'documents',
+            'spreadsheet': 'spreadsheets'
+          };
+          
+          const targetType = typeMapping[datasource.type] || 'documents';
+          groupedDataSources[targetType].push(datasource);
         });
+        
+        setAvailableDataSources(groupedDataSources);
       }
     } catch (err) {
       console.error('Failed to fetch data sources:', err);
@@ -58,14 +76,16 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
     onDataSourcesChange({
       websites: [],
       pdfs: [],
-      documents: []
+      documents: [],
+      spreadsheets: []
     });
   };
 
   const getSelectedCount = () => {
     return (selectedDataSources.websites?.length || 0) +
            (selectedDataSources.pdfs?.length || 0) +
-           (selectedDataSources.documents?.length || 0);
+           (selectedDataSources.documents?.length || 0) +
+           (selectedDataSources.spreadsheets?.length || 0);
   };
 
   const hasAnySelection = () => getSelectedCount() > 0;
@@ -75,28 +95,37 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
       case 'websites': return Globe;
       case 'pdfs': return FileText;
       case 'documents': return File;
+      case 'spreadsheets': return Grid;
       default: return File;
     }
   };
 
   const formatSourceName = (source, type) => {
-    if (type === 'websites') {
-      return source.domain;
-    }
-    // Use displayName if available (meaningful name), otherwise fall back to fileName
-    return source.displayName || source.originalName || source.fileName;
+    // Use display_name from datasource.json registry
+    return source.display_name || source.id;
   };
 
   const getSourceIdentifier = (source, type) => {
-    if (type === 'websites') {
-      return source.domain;
-    }
-    // Use displayName for consistent identification
-    return source.displayName || source.fileName;
+    // Use the datasource ID for filtering
+    return source.id;
   };
 
   const formatSourceSize = (source) => {
-    return source.sizeFormatted || '';
+    // Size info will come from the registry if available
+    return source.size_formatted || '';
+  };
+
+  const formatSourceInfo = (source) => {
+    // Show creation date or URL info
+    if (source.source_url) {
+      try {
+        const url = new URL(source.source_url);
+        return url.hostname;
+      } catch {
+        return 'Website';
+      }
+    }
+    return source.type?.toUpperCase() || 'File';
   };
 
   if (loading) {
@@ -161,6 +190,19 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
               </button>
             </span>
           ))}
+          {selectedDataSources.spreadsheets?.map((sheet) => (
+            <span key={`sheet-${sheet}`} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+              <Grid size={12} className="mr-1" />
+              {sheet}
+              <button
+                onClick={() => handleSourceToggle('spreadsheets', sheet)}
+                className="ml-1 text-purple-600 hover:text-purple-800"
+                disabled={disabled}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
           <button
             onClick={clearAllFilters}
             className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -202,26 +244,29 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
                   <span className="text-xs text-gray-500">({availableDataSources.websites.length})</span>
                 </div>
                 <div className="space-y-1">
-                  {availableDataSources.websites.map((website) => (
-                    <label key={`website-${website.domain}`} className="flex items-center space-x-2 text-sm hover:bg-gray-50 p-1 rounded cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selectedDataSources.websites?.includes(website.domain) || false}
-                        onChange={() => handleSourceToggle('websites', website.domain)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                        disabled={disabled}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-900 truncate">{website.domain}</span>
-                          <span className="text-xs text-gray-500 ml-2">{formatSourceSize(website)}</span>
+                  {availableDataSources.websites.map((website) => {
+                    const sourceId = getSourceIdentifier(website, 'websites');
+                    return (
+                      <label key={`website-${sourceId}`} className="flex items-center space-x-2 text-sm hover:bg-gray-50 p-1 rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedDataSources.websites?.includes(sourceId) || false}
+                          onChange={() => handleSourceToggle('websites', sourceId)}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          disabled={disabled}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-900 truncate">{formatSourceName(website, 'websites')}</span>
+                            <span className="text-xs text-gray-500 ml-2">{formatSourceSize(website)}</span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {formatSourceInfo(website)}
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-500">
-                          {website.files} file{website.files > 1 ? 's' : ''}
-                        </div>
-                      </div>
-                    </label>
-                  ))}
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -251,7 +296,7 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
                             <span className="text-gray-900 truncate">{formatSourceName(pdf, 'pdfs')}</span>
                             <span className="text-xs text-gray-500 ml-2">{formatSourceSize(pdf)}</span>
                           </div>
-                          <div className="text-xs text-gray-500">PDF</div>
+                          <div className="text-xs text-gray-500">{formatSourceInfo(pdf)}</div>
                         </div>
                       </label>
                     );
@@ -285,7 +330,41 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
                             <span className="text-gray-900 truncate">{formatSourceName(doc, 'documents')}</span>
                             <span className="text-xs text-gray-500 ml-2">{formatSourceSize(doc)}</span>
                           </div>
-                          <div className="text-xs text-gray-500">{doc.type?.toUpperCase() || 'DOC'}</div>
+                          <div className="text-xs text-gray-500">{formatSourceInfo(doc)}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Spreadsheets Section */}
+            {availableDataSources.spreadsheets.length > 0 && (
+              <div className="p-3 border-b border-gray-200">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Grid size={16} className="text-purple-600" />
+                  <h4 className="text-sm font-medium text-gray-900">Spreadsheets</h4>
+                  <span className="text-xs text-gray-500">({availableDataSources.spreadsheets.length})</span>
+                </div>
+                <div className="space-y-1">
+                  {availableDataSources.spreadsheets.map((sheet) => {
+                    const sourceId = getSourceIdentifier(sheet, 'spreadsheets');
+                    return (
+                      <label key={`sheet-${sourceId}`} className="flex items-center space-x-2 text-sm hover:bg-gray-50 p-1 rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedDataSources.spreadsheets?.includes(sourceId) || false}
+                          onChange={() => handleSourceToggle('spreadsheets', sourceId)}
+                          className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                          disabled={disabled}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-900 truncate">{formatSourceName(sheet, 'spreadsheets')}</span>
+                            <span className="text-xs text-gray-500 ml-2">{formatSourceSize(sheet)}</span>
+                          </div>
+                          <div className="text-xs text-gray-500">{formatSourceInfo(sheet)}</div>
                         </div>
                       </label>
                     );
@@ -297,7 +376,8 @@ const DataSourceSelector = ({ selectedDataSources, onDataSourcesChange, disabled
             {/* No Data Sources Message */}
             {availableDataSources.websites.length === 0 && 
              availableDataSources.pdfs.length === 0 && 
-             availableDataSources.documents.length === 0 && (
+             availableDataSources.documents.length === 0 && 
+             availableDataSources.spreadsheets.length === 0 && (
               <div className="p-4 text-center text-gray-500">
                 <Filter size={24} className="mx-auto mb-2 text-gray-300" />
                 <p className="text-sm">No data sources available</p>

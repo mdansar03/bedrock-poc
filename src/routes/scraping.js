@@ -124,13 +124,15 @@ router.post('/scrape', [
         title: result.title,
         timestamp: result.timestamp,
         metadata: result.metadata,
-        chunksExtracted: result.content.chunks.length,
+        filesCreated: result.content.files.length,
         content: {
-          preview: result.content.chunks.length > 0 ? 
-            result.content.chunks[0].content.substring(0, 500) + '...' : 
+          preview: result.content.files.length > 0 ? 
+            result.content.files[0].content.substring(0, 500) + '...' : 
             'No content extracted',
-          totalChunks: result.content.chunks.length,
-          chunks: result.content.chunks
+          totalFiles: result.content.files.length,
+          files: result.content.files,
+          folderPath: result.metadata?.folderPath || 'N/A',
+          datasourceFile: result.metadata?.datasourceFile || 'N/A'
         }
       }
     });
@@ -192,7 +194,7 @@ router.get('/health', async (req, res) => {
       externalService: {
         available: isAvailable,
         health: externalHealth,
-        endpoint: process.env.EXTERNAL_SCRAPER_URL || 'https://scrapper.apps.kaaylabs.com/api',
+        endpoint: 'http://localhost:3358/api',
         lastChecked: new Date().toISOString()
       }
     });
@@ -205,7 +207,7 @@ router.get('/health', async (req, res) => {
       externalService: {
         available: false,
         health: { status: 'unhealthy' },
-        endpoint: process.env.EXTERNAL_SCRAPER_URL || 'https://scrapper.apps.kaaylabs.com/api',
+        endpoint:'http://localhost:3358/api',
         lastChecked: new Date().toISOString()
       }
     });
@@ -348,6 +350,14 @@ router.post('/enhanced-crawl', [
       
       return cleanUrl;
     }),
+  body('maxDepth')
+    .optional()
+    .isInt({ min: 1, max: 50 })
+    .withMessage('Max depth must be between 1 and 50'),
+  body('chunkSize')
+    .optional()
+    .isInt({ min: 1000, max: 20000 })
+    .withMessage('Chunk size must be between 1000 and 20000'),
   body('options')
     .optional()
     .isObject()
@@ -383,12 +393,15 @@ router.post('/enhanced-crawl', [
       });
     }
 
-    const { url, options = {} } = req.body;
+    const { url, maxDepth, chunkSize, options = {} } = req.body;
 
     logger.info(`Received comprehensive crawling request for: ${url}`);
+    logger.info(`Enhanced crawl parameters: maxDepth=${maxDepth || 10}, chunkSize=${chunkSize || 10000}`);
 
     // Set default crawling options
     const crawlOptions = {
+      maxDepth: maxDepth || 10,
+      chunkSize: chunkSize || 10000,
       maxPages: options.maxPages || 50,
       delay: options.delay || 1000,
       followExternalLinks: options.followExternalLinks || false,
@@ -406,13 +419,14 @@ router.post('/enhanced-crawl', [
 
     // Calculate content preview from scraped pages
     const contentPreview = result.scrapedPages
-      .filter(page => page.content?.chunks?.length > 0)
+      .filter(page => page.content?.files?.length > 0)
       .slice(0, 3) // First 3 pages with content
       .map(page => ({
         url: page.url,
         title: page.title,
-        chunksCount: page.content.chunks.length,
-        preview: page.content.chunks[0]?.content?.substring(0, 200) + '...' || 'No content'
+        filesCount: page.content.files.length,
+        folderPath: page.metadata?.folderPath || 'N/A',
+        preview: page.content.files[0]?.content?.substring(0, 200) + '...' || 'No content'
       }));
 
     res.json({
@@ -425,7 +439,7 @@ router.post('/enhanced-crawl', [
         contentStats: result.contentStats,
         discoveryStats: result.discoveryStats,
         totalPagesScraped: result.scrapedPages.length,
-        totalChunks: result.contentStats.totalChunks,
+        totalFiles: result.contentStats.totalFiles || 0,
         successRate: result.crawlingStats.successRate,
         errors: result.errors.length > 0 ? result.errors.slice(0, 5) : [], // Show first 5 errors
         contentPreview,
@@ -441,8 +455,10 @@ router.post('/enhanced-crawl', [
           title: page.title,
           timestamp: page.timestamp,
           metadata: page.metadata,
-          contentChunks: page.content?.chunks?.length || 0,
-          contentPreview: page.content?.chunks?.[0]?.content?.substring(0, 300) || 'No content'
+          contentFiles: page.content?.files?.length || 0,
+          folderPath: page.metadata?.folderPath || 'N/A',
+          datasourceFile: page.metadata?.datasourceFile || 'N/A',
+          contentPreview: page.content?.files?.[0]?.content?.substring(0, 300) || 'No content'
         }))
       }
     });

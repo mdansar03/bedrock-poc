@@ -311,7 +311,7 @@ Current error: ${error.message}`);
         },
       },
       Tags: {
-        Project: "Oralia-ActionGroups",
+        Project: "chatbot-ActionGroups",
         ApiName: apiConfig.apiName,
       },
     });
@@ -416,7 +416,7 @@ Current error: ${error.message}`);
           Tags: [
             {
               Key: "Project",
-              Value: "Oralia-ActionGroups",
+              Value: "chatbot-ActionGroups",
             },
             {
               Key: "Purpose",
@@ -865,7 +865,7 @@ function formatResponseForAgent(apiResponse, endpoint, functionName) {
     // Ensure function name + role suffix fits within AWS limits
     // Max function name length to allow for "-execution-role" suffix in IAM role (64 char limit)
     const maxFunctionNameLength = 64 - '-execution-role'.length; // 49 characters
-    const prefix = 'oralia-ag-'; // Shortened prefix (10 chars vs 21 chars)
+    const prefix = 'chatbot-ag-'; // Shortened prefix (10 chars vs 21 chars)
     const maxApiNameLength = maxFunctionNameLength - prefix.length; // 39 characters for API name
     
     const truncatedNormalized = normalized.length > maxApiNameLength 

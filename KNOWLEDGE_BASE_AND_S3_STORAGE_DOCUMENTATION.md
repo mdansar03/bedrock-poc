@@ -66,6 +66,61 @@ s3://your-bedrock-bucket/
 
 ---
 
+## Multi-Tier Storage Architecture
+
+### Four-Tier Storage Strategy
+
+The system implements a sophisticated **four-tier storage approach** optimized for different use cases:
+
+#### **Tier 1: Raw Content Backup**
+- **Location**: `raw-content/web-scrapes/{domain}/{date}/{urlHash}.json`
+- **Purpose**: Preserves original scraped content for backup and reference
+- **Retention**: Long-term storage for audit and reprocessing
+- **Example Path**: `raw-content/web-scrapes/kaaylabs.com/2024-01-15/abc123def456.json`
+
+#### **Tier 2: Processed Chunks (AI-Optimized)**
+- **Location**: `processed-chunks/web-content/{chunkId}.json`
+- **Purpose**: Individual content chunks optimized for vector search and retrieval
+- **Configuration**:
+  - Max Chunk Size: 2000 characters
+  - Overlap Size: 200 characters  
+  - Min Chunk Size: 150 characters
+- **Benefits**: Direct access to specific content segments, enhanced search performance
+
+#### **Tier 3: Bedrock-Formatted Documents**
+- **Location**: `documents/{date}/{documentId}.txt`
+- **Purpose**: Documents formatted specifically for AWS Bedrock Knowledge Base ingestion
+- **Format**: Structured text with metadata headers and chunk separators
+
+#### **Tier 4: Metadata Index**
+- **Location**: `metadata/content-index.json`
+- **Purpose**: Maintains searchable index of all stored documents
+- **Features**: Cross-references between tiers, search optimization, analytics support
+
+### Storage Flow Process
+
+```mermaid
+graph LR
+    A[External Scraping] --> B[Content Processing]
+    B --> C[Tier 1: Raw Backup]
+    B --> D[Tier 2: Chunked Content]
+    B --> E[Tier 3: Bedrock Format]
+    B --> F[Tier 4: Metadata Index]
+    
+    D --> G[Vector Embeddings]
+    E --> H[Knowledge Base Sync]
+    F --> I[Search & Analytics]
+```
+
+### Benefits of Multi-Tier Architecture
+
+1. **Data Durability**: Raw content preserved for disaster recovery
+2. **Performance Optimization**: Chunked content enables fast retrieval
+3. **AI Integration**: Bedrock-formatted documents ensure seamless AI processing
+4. **Operational Intelligence**: Metadata index provides system insights
+
+---
+
 ## Content Processing Pipeline
 
 ### 1. Document Upload Processing
@@ -302,6 +357,19 @@ web-scrapes/
 }
 ```
 
+**S3 Object Metadata for Raw Scrapes**:
+```json
+{
+  "domain": "example.com",
+  "url": "https://example.com/products",
+  "title": "Product Catalog", 
+  "contentHash": "sha256:abcdef123456",
+  "chunkCount": "5",
+  "scrapedAt": "2024-12-19T10:30:00.000Z",
+  "source": "external-scraper"
+}
+```
+
 ### 4. Metadata Folder (`/metadata/`)
 
 **Purpose**: System-wide indexing and operational data
@@ -353,6 +421,123 @@ sync-logs/
   "total_chunks_processed": 420
 }
 ```
+
+---
+
+## External Scraping Storage Process
+
+### Detailed External Scraping Flow
+
+The external scraping process implements a comprehensive storage strategy that ensures data durability and optimal retrieval performance:
+
+#### Step 1: Content Acquisition
+```javascript
+// Location: src/services/externalScrapingService.js
+async scrapeAndProcess(url) {
+  // External API call to scraping service
+  const scrapedData = await this.callExternalAPI(url);
+  
+  // Process and clean content
+  const processedData = await this.processScrapedContent(scrapedData);
+  
+  // Store in multi-tier S3 architecture
+  return await this.storeInS3(processedData);
+}
+```
+
+#### Step 2: Multi-Tier Storage Implementation
+**Tier 1 - Raw Content Backup**:
+- **Path Pattern**: `raw-content/web-scrapes/{domain}/{date}/{urlHash}.json`
+- **Content Structure**: Complete scraped data with metadata
+- **Metadata Sanitization**: URL and title sanitization for S3 compatibility
+- **Example Storage**:
+  ```json
+  {
+    "content_id": "abc123def456",
+    "source_type": "web_scrape",
+    "source_url": "https://kaaylabs.com/services",
+    "title": "Services - KayLabs",
+    "content": "Full page content...",
+    "chunks": [...],
+    "processed_timestamp": "2024-01-15T10:30:00.000Z",
+    "content_hash": "sha256:uniquehash",
+    "file_type": "html",
+    "language": "en"
+  }
+  ```
+
+**Tier 2 - Optimized Processing**:
+- **Path Pattern**: Uses Bedrock Knowledge Base Service for optimal chunk storage
+- **Processing**: Content cleaning, intelligent chunking, metadata enhancement
+- **Storage Location**: `processed-chunks/web-content/{chunkId}.json`
+
+#### Step 3: S3 Object Metadata Enhancement
+Each stored object includes comprehensive metadata for efficient retrieval and management:
+
+```javascript
+// S3 Object Metadata Structure
+{
+  domain: sanitizeMetadataValue(domain, 200),
+  url: sanitizeMetadataValue(processedData.url, 1000),
+  title: sanitizeMetadataValue(processedData.title),
+  contentHash: sanitizeMetadataValue(processedData.contentHash, 100),
+  chunkCount: String(processedData.chunks.length),
+  scrapedAt: sanitizeMetadataValue(timestamp, 50),
+  source: 'external-scraper'
+}
+```
+
+#### Step 4: Content Optimization Features
+**Hash-Based Deduplication**:
+- URL-based hash generation prevents duplicate storage
+- Content hash verification ensures data integrity
+- Timestamp-based organization enables efficient retrieval
+
+**Domain-Based Organization**:
+- Automatic domain extraction and organization
+- Date-based partitioning within domain folders
+- Efficient filtering and bulk operations support
+
+### Integration with Knowledge Base Service
+
+After external scraping and S3 storage, the content flows into the main knowledge base service:
+
+```mermaid
+sequenceDiagram
+    participant Scraper as External Scraper
+    participant S3 as S3 Storage
+    participant KBService as KB Service
+    participant Bedrock as Bedrock KB
+    
+    Scraper->>S3: Store raw content backup
+    Scraper->>KBService: Pass processed data
+    KBService->>KBService: Create optimal chunks
+    KBService->>S3: Store processed chunks
+    KBService->>S3: Store Bedrock format
+    KBService->>S3: Update metadata index
+    KBService->>Bedrock: Trigger sync job
+    Bedrock->>S3: Read documents
+    Bedrock->>Bedrock: Generate embeddings
+```
+
+### Error Handling and Recovery
+
+**Metadata Sanitization**:
+```javascript
+sanitizeMetadataValue(value, maxLength = 1000) {
+  if (!value) return 'Unknown';
+  
+  return String(value)
+    .replace(/[^\w\s\-\.\/\:]/g, '')
+    .substring(0, maxLength) || 'Untitled';
+}
+```
+
+**Storage Resilience**:
+- Automatic retry logic for failed S3 operations
+- Graceful handling of malformed content
+- Comprehensive error logging and monitoring
+- Rollback capabilities for partial failures
 
 ---
 
@@ -429,7 +614,7 @@ sequenceDiagram
 this.chunkConfig = {
   maxChunkSize: 2000,     // Optimal for embedding models
   overlapSize: 200,       // Context preservation
-  minChunkSize: 200,      // Meaningful content threshold
+  minChunkSize: 150,      // Reduced minimum for short content like contact pages
   separators: ['\n\n', '\n', '. ', '! ', '? ', '; ']
 };
 ```
@@ -437,9 +622,48 @@ this.chunkConfig = {
 **Why These Settings**:
 - **2000 characters**: Sweet spot for Titan embeddings quality vs. cost
 - **200 character overlap**: Maintains context across chunk boundaries
+- **150 character minimum**: Accommodates short content like contact pages and brief descriptions
 - **Semantic separators**: Preserves meaning by breaking at natural boundaries
 
-### 2. Storage Optimization
+### 2. Content Cleaning and Optimization
+
+**Intelligent Content Cleaning**:
+```javascript
+// Location: src/services/bedrockKnowledgeBaseService.js:206-233
+cleanContent(content) {
+  let cleaned = content;
+  
+  // Remove excessive whitespace
+  cleaned = cleaned.replace(/\s+/g, ' ');
+  cleaned = cleaned.replace(/\n\s*\n/g, '\n\n');
+  
+  // Remove common navigation and boilerplate text
+  const removePatterns = [
+    /skip to (main )?content/gi,
+    /cookie policy/gi,
+    /privacy policy/gi,
+    /terms of service/gi,
+    /newsletter signup/gi,
+    /follow us on/gi,
+    /share this/gi,
+    /copyright \d{4}/gi
+  ];
+  
+  removePatterns.forEach(pattern => {
+    cleaned = cleaned.replace(pattern, '');
+  });
+  
+  return cleaned.trim();
+}
+```
+
+**Content Optimization Features**:
+- **Whitespace Normalization**: Removes excessive spacing while preserving structure
+- **Boilerplate Removal**: Eliminates common navigation and footer content
+- **Pattern-Based Filtering**: Removes copyright notices, privacy policies, and other noise
+- **Context Preservation**: Maintains paragraph breaks and meaningful formatting
+
+### 3. Storage Optimization
 
 **Partitioning Strategy**:
 - **Date-based partitioning**: Enables efficient S3 lifecycle policies
@@ -451,7 +675,7 @@ this.chunkConfig = {
 - **Lifecycle Policies**: Automatic management of old content
 - **Compression**: JSON files stored with efficient formatting
 
-### 3. Search Performance
+### 4. Search Performance
 
 **Index Optimization**:
 - **Vector dimensionality**: Balanced for speed vs. accuracy
@@ -534,6 +758,214 @@ async getStorageStats() {
 - Knowledge base sync status
 - Processing pipeline health
 - Search functionality verification
+
+---
+
+## Metadata Key Standardization and Filtering Compatibility
+
+### Current Challenge: Metadata Key Mismatch
+
+The system currently faces a **critical compatibility issue** between storage metadata and AWS Bedrock filtering expectations:
+
+#### **Current Custom Implementation**
+```javascript
+// Current Node.js Implementation
+Metadata: {
+  domain: "example.com",
+  url: "https://example.com/page", 
+  title: "Page Title",
+  contentHash: "sha256hash",
+  chunkCount: "5",
+  scrapedAt: "2024-01-15T10:30:00.000Z",
+  source: "external-scraper"
+}
+```
+
+#### **AWS Bedrock Standard Requirements**
+```javascript
+// Expected by AWS Bedrock Filtering
+Metadata: {
+  "x-amz-bedrock-kb-source-uri": "s3://bucket/path/to/file.txt",
+  "x-amz-bedrock-kb-data-source-id": "DATASOURCEID123",
+  "x-amz-bedrock-kb-content-type": "text/html",
+  "x-amz-bedrock-kb-created-date": "2024-01-15T10:30:00.000Z",
+  "x-amz-bedrock-kb-last-modified-date": "2024-01-15T10:30:00.000Z",
+  "x-amz-bedrock-kb-data": "Additional metadata content"
+}
+```
+
+### **Recommended Hybrid Metadata Strategy**
+
+To maintain **both custom functionality AND AWS compatibility**, implement a dual metadata approach:
+
+#### **Enhanced Metadata Structure**
+```javascript
+// Recommended Implementation - Best of Both Worlds
+Metadata: {
+  // AWS Bedrock Standard Keys (for filtering)
+  "x-amz-bedrock-kb-source-uri": `s3://${bucket}/${key}`,
+  "x-amz-bedrock-kb-data-source-id": process.env.BEDROCK_DATA_SOURCE_ID,
+  "x-amz-bedrock-kb-content-type": "text/html",
+  "x-amz-bedrock-kb-created-date": timestamp,
+  "x-amz-bedrock-kb-last-modified-date": timestamp,
+  "x-amz-bedrock-kb-data": JSON.stringify({
+    domain: "example.com",
+    url: "https://example.com/page",
+    title: "Page Title"
+  }),
+  
+  // Custom Keys (for application logic) - KEEP THESE
+  domain: "example.com",
+  url: "https://example.com/page",
+  title: "Page Title",
+  contentHash: "sha256hash",
+  chunkCount: "5",
+  scrapedAt: timestamp,
+  source: "external-scraper"
+}
+```
+
+### **Implementation Changes Required**
+
+#### **1. Update bedrockKnowledgeBaseService.js**
+```javascript
+// Location: src/services/bedrockKnowledgeBaseService.js
+async storeDocument(document) {
+  // ... existing code ...
+  
+  // Enhanced metadata with AWS compatibility
+  const enhancedMetadata = {
+    // AWS Bedrock Standard Keys
+    "x-amz-bedrock-kb-source-uri": `s3://${this.bucket}/${s3Key}`,
+    "x-amz-bedrock-kb-data-source-id": this.dataSourceId,
+    "x-amz-bedrock-kb-content-type": this.getContentType(document),
+    "x-amz-bedrock-kb-created-date": timestamp,
+    "x-amz-bedrock-kb-last-modified-date": timestamp,
+    "x-amz-bedrock-kb-data": JSON.stringify({
+      domain: metadata?.domain,
+      url: url,
+      title: title,
+      sourceType: metadata?.source === 'external-scraper' ? 'web-content' : 'document-content'
+    }),
+    
+    // Keep existing custom keys for backwards compatibility
+    ...metadata,
+    documentId,
+    chunkCount: chunks.length,
+    originalLength: content.length,
+    processedLength: cleanedContent.length
+  };
+  
+  await this.uploadToS3(s3Key, formattedContent, enhancedMetadata);
+}
+
+getContentType(document) {
+  if (document.metadata?.source === 'external-scraper') return 'text/html';
+  if (document.metadata?.fileType?.includes('pdf')) return 'application/pdf';
+  return 'text/plain';
+}
+```
+
+#### **2. Update externalScrapingService.js**
+```javascript
+// Location: src/services/externalScrapingService.js
+async storeInS3(processedData) {
+  const enhancedMetadata = {
+    // AWS Bedrock Standard Keys
+    "x-amz-bedrock-kb-source-uri": `s3://${this.bucket}/${rawKey}`,
+    "x-amz-bedrock-kb-data-source-id": process.env.BEDROCK_DATA_SOURCE_ID,
+    "x-amz-bedrock-kb-content-type": "text/html",
+    "x-amz-bedrock-kb-created-date": timestamp,
+    "x-amz-bedrock-kb-last-modified-date": timestamp,
+    "x-amz-bedrock-kb-data": JSON.stringify({
+      domain: domain,
+      url: processedData.url,
+      title: processedData.title,
+      sourceType: "web-content"
+    }),
+    
+    // Keep existing custom metadata
+    domain: this.sanitizeMetadataValue(domain, 200),
+    url: this.sanitizeMetadataValue(processedData.url, 1000),
+    title: this.sanitizeMetadataValue(processedData.title),
+    contentHash: this.sanitizeMetadataValue(processedData.contentHash, 100),
+    chunkCount: String(processedData.chunks.length),
+    scrapedAt: this.sanitizeMetadataValue(timestamp, 50),
+    source: 'external-scraper'
+  };
+  
+  await this.s3Client.send(new PutObjectCommand({
+    Bucket: this.bucket,
+    Key: rawKey,
+    Body: JSON.stringify(processedData),
+    ContentType: 'application/json',
+    Metadata: enhancedMetadata
+  }));
+}
+```
+
+### **Benefits of Hybrid Approach**
+
+#### **✅ AWS Bedrock Compatibility**
+- **Native filtering works**: `x-amz-bedrock-kb-source-uri` enables proper filtering
+- **Standard compliance**: Follows AWS documentation and best practices
+- **Better performance**: Leverages AWS-optimized filtering mechanisms
+
+#### **✅ Backwards Compatibility**  
+- **Existing code continues working**: Custom keys are preserved
+- **No breaking changes**: Current search and retrieval logic unchanged
+- **Gradual migration**: Can implement incrementally
+
+#### **✅ Enhanced Filtering Capabilities**
+```javascript
+// Now both approaches work:
+
+// AWS Native Filtering (Python/any language)
+filter = {
+  'stringContains': {
+    'key': 'x-amz-bedrock-kb-source-uri',
+    'value': 'kaaylabs.com'
+  }
+}
+
+// Custom Application Filtering (Node.js)
+filter = {
+  'equals': {
+    'key': 'domain', 
+    'value': 'kaaylabs.com'
+  }
+}
+```
+
+### **Migration Strategy**
+
+#### **Phase 1: Implement Enhanced Metadata (Recommended)**
+1. Update storage services to include AWS standard keys
+2. Keep existing custom keys for backwards compatibility
+3. Test filtering with both key types
+4. Deploy gradually with feature flags
+
+#### **Phase 2: Update Filtering Logic** 
+1. Update Python filtering to use `x-amz-bedrock-kb-source-uri`
+2. Maintain Node.js filtering with custom keys
+3. A/B test filtering performance
+4. Monitor and optimize
+
+#### **Phase 3: Optimize and Clean**
+1. Remove redundant metadata keys if needed
+2. Optimize for storage cost and performance  
+3. Update documentation and processes
+
+### **Immediate Action Required**
+
+**YES, you should update your storage methods** to include AWS standard metadata keys while keeping your custom keys. This hybrid approach will:
+
+1. **Fix current filtering issues** immediately
+2. **Maintain backwards compatibility** 
+3. **Future-proof** your implementation
+4. **Improve performance** through native AWS filtering
+
+The changes are **relatively straightforward** and can be implemented incrementally without breaking existing functionality.
 
 ---
 

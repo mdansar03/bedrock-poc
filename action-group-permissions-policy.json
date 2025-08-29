@@ -42,7 +42,7 @@
         "lambda:GetFunctionConfiguration"
       ],
       "Resource": [
-        "arn:aws:lambda:*:*:function:oralia-action-group-*"
+        "arn:aws:lambda:*:*:function:chatbot-action-group-*"
       ]
     },
     {
@@ -63,7 +63,7 @@
         "iam:ListRoleTags"
       ],
       "Resource": [
-        "arn:aws:iam::*:role/oralia-action-group-*",
+        "arn:aws:iam::*:role/chatbot-action-group-*",
         "arn:aws:iam::*:role/AmazonBedrockExecutionRoleForAgents_*"
       ]
     },
@@ -78,8 +78,8 @@
         "logs:DescribeLogStreams"
       ],
       "Resource": [
-        "arn:aws:logs:*:*:log-group:/aws/lambda/oralia-action-group-*",
-        "arn:aws:logs:*:*:log-group:/aws/lambda/oralia-action-group-*:*"
+        "arn:aws:logs:*:*:log-group:/aws/lambda/chatbot-action-group-*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/chatbot-action-group-*:*"
       ]
     }
   ]

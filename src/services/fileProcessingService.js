@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const logger = require('../utils/logger');
 const bedrockKnowledgeBaseService = require('./bedrockKnowledgeBaseService');
+const bedrockCompliantStorage = require('./bedrockCompliantStorage');
 const { generateHash } = require('../utils/hash');
 
 // Dynamic imports for optional dependencies
@@ -128,11 +129,18 @@ class FileProcessingService {
       // Generate unique file ID
       const fileId = generateHash(file.originalname + Date.now());
       
+      // Create a meaningful URL format for uploaded files
+      const timestamp = new Date().toISOString();
+      const baseName = file.originalname.includes('.') ? 
+        file.originalname.substring(0, file.originalname.lastIndexOf('.')) : 
+        file.originalname;
+      const fileUrl = `local://document/${baseName}-${fileId}`;
+      
       // Prepare document for Knowledge Base
       const document = {
         content: extractionResult.content,
         title: metadata.title || this.sanitizeFileName(file.originalname),
-        url: `file://${file.originalname}`,
+        url: fileUrl,
         metadata: {
           ...metadata,
           fileId,
@@ -140,17 +148,18 @@ class FileProcessingService {
           fileSize: file.size,
           mimeType: file.mimetype,
           fileType: path.extname(file.originalname).toLowerCase(),
-          uploadedAt: new Date().toISOString(),
+          uploadedAt: timestamp,
           extractionMethod: extractionResult.method,
           pageCount: extractionResult.pageCount,
           processingTime: extractionResult.processingTime
         }
       };
       
-      // Store extracted content in Knowledge Base
-      const kbResult = await bedrockKnowledgeBaseService.storeDocument(document);
+      // Store extracted content using Bedrock compliant structure
+      // This creates both document file and .metadata.json sidecar
+      const kbResult = await bedrockCompliantStorage.storeDocument(document);
       
-      // Store original file in S3 for reference
+      // Store original file in S3 for reference (backup)
       const originalFileKey = await this.storeOriginalFile(file, fileId);
       
       const result = {
@@ -163,7 +172,8 @@ class FileProcessingService {
         originalFileKey,
         extractionMethod: extractionResult.method,
         pageCount: extractionResult.pageCount,
-        processingTime: extractionResult.processingTime
+        processingTime: extractionResult.processingTime,
+        bedrockCompliant: true
       };
       
       logger.info(`File processed successfully: ${file.originalname}`, {
@@ -419,6 +429,29 @@ class FileProcessingService {
   }
 
   /**
+   * Sanitize metadata value for S3 headers
+   * @param {string} value - The metadata value to sanitize
+   * @param {number} maxLength - Maximum length (default 1000)
+   * @returns {string} - Sanitized value safe for S3 metadata
+   */
+  sanitizeMetadataValue(value, maxLength = 1000) {
+    if (!value) return 'Unknown';
+    
+    // Convert to string and remove invalid characters for S3 metadata
+    return String(value)
+      // Remove non-ASCII characters
+      .replace(/[^\x20-\x7E]/g, '')
+      // Remove control characters and problematic chars
+      .replace(/[\r\n\t\f\v]/g, ' ')
+      // Replace multiple spaces with single space
+      .replace(/\s+/g, ' ')
+      // Trim whitespace
+      .trim()
+      // Limit length
+      .substring(0, maxLength) || 'Unknown';
+  }
+
+  /**
    * Store original file in S3 for reference (following correct bucket structure)
    * @param {Object} file - Original file
    * @param {string} fileId - Unique file ID (for backwards compatibility and deduplication)
@@ -469,12 +502,28 @@ class FileProcessingService {
         Body: file.buffer,
         ContentType: file.mimetype,
         Metadata: {
-          originalName: file.originalname,
-          fileId: fileId,
-          sanitizedName: finalFileName,
-          uploadedAt: timestamp,
-          fileSize: String(file.size),
-          fileType: fileTypeFolder
+          // S3-compatible keys for original file backup
+          "bedrock-source-uri": `s3://${this.bucket}/${key}`,
+          "bedrock-data-source-id": process.env.BEDROCK_DATA_SOURCE_ID || 'unknown',
+          "bedrock-content-type": file.mimetype,
+          "bedrock-created-date": timestamp,
+          "bedrock-modified-date": timestamp,
+          
+          // Filtering-specific metadata for original file
+          "source-type": 'document-content',
+          "source-identifier": finalFileName,
+          "datasource": finalFileName, // New field for easy filtering
+          "type": ext.substring(1) === 'pdf' ? 'pdf' : 'document', // Simplified type field
+          "domain": 'none',
+          "file-name": finalFileName,
+          "file-type": ext.substring(1),
+          "document-id": fileId,
+          "category": 'document-backup',
+          "is-original-file": 'true',
+          "file-size": String(file.size),
+          "title": this.sanitizeMetadataValue(file.originalname, 200),
+          "original-name": this.sanitizeMetadataValue(file.originalname, 200),
+          "uploaded-at": timestamp
         },
         // Add tags for organization
         Tagging: `FileType=original&Extension=${ext.substring(1)}&FileId=${fileId}&Category=${fileTypeFolder}&OriginalName=${encodeURIComponent(file.originalname)}`

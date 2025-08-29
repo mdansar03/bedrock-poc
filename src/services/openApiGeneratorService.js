@@ -29,7 +29,7 @@ class OpenApiGeneratorService {
           title: apiConfig.apiName,
           description: apiConfig.description || `Auto-generated OpenAPI schema for ${apiConfig.apiName}`,
           version: '1.0.0',
-          'x-generated-by': 'Oralia AI Action Group Generator',
+          'x-generated-by': 'chatbot AI Action Group Generator',
           'x-generated-at': new Date().toISOString()
         },
         servers: [

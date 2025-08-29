@@ -1,16 +1,17 @@
 const axios = require('axios');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { generateHash, generateChunkId } = require('../utils/hash');
 const logger = require('../utils/logger');
 const knowledgeBaseSync = require('./knowledgeBaseSync');
 const bedrockKnowledgeBaseService = require('./bedrockKnowledgeBaseService');
+const bedrockCompliantStorage = require('./bedrockCompliantStorage');
 const cheerio = require('cheerio');
 const TurndownService = require('turndown');
 const { convert } = require('html-to-text');
 
 class ExternalScrapingService {
   constructor() {
-    this.externalApiUrl = process.env.EXTERNAL_SCRAPER_URL || 'http://localhost:4000/api';
+    this.externalApiUrl = process.env.EXTERNAL_SCRAPER_URL || 'http://localhost:3358/api';
     this.s3Client = new S3Client({
       region: process.env.AWS_REGION || 'us-east-1',
       credentials: {
@@ -116,12 +117,7 @@ class ExternalScrapingService {
       // Prepare request for external scraping service
       const requestPayload = {
         url: cleanUrl,
-        includeJavaScript: false,
-        // selectors: {
-        //   title: options.titleSelector || 'title, h1',
-        //   description: options.descriptionSelector || 'meta[name="description"], meta[property="og:description"]',
-        //   content: options.contentSelector || 'main, article, .content, #content, body'
-        // }
+        includeJavaScript: false
       };
       logger.debug('Request payload:', requestPayload);
 
@@ -138,19 +134,34 @@ class ExternalScrapingService {
         hasData: !!rawContent,
         dataType: typeof rawContent,
         contentLength: typeof rawContent === 'string' ? rawContent.length : 'N/A',
-        contentPreview: typeof rawContent === 'string' ? rawContent.substring(0, 200) + '...' : 'N/A'
+        contentPreview: typeof rawContent === 'string' ? rawContent.substring(0, 200) + '...' : 'N/A',
+        fullResponse: response.data // Log full response for debugging
       });
+
+      // Enhanced debugging for content issues
+      if (typeof rawContent === 'string') {
+        logger.info('Content analysis:', {
+          hasEncodedChars: /â|˜|°/.test(rawContent),
+          hasJavaScript: rawContent.includes('You need to enable JavaScript'),
+          encoding: 'checking for encoding issues',
+          firstLine: rawContent.split('\n')[0],
+          contentSample: rawContent.substring(0, 500)
+        });
+      }
 
       // Validate that we have content
       if (!rawContent || (typeof rawContent === 'string' && rawContent.trim().length === 0)) {
         throw new Error('No content could be extracted from this URL. The page might be empty, blocked, or require authentication.');
       }
       
-      // Process and extract content using proper libraries
-      const processedResult = await this.extractAndProcessContent(cleanUrl, rawContent);
+      // Clean up potential encoding issues while preserving raw content structure
+      const cleanedContent = this.cleanEncodingIssues(rawContent);
       
-      // Store in S3
-      await this.storeInS3(processedResult);
+      // Process raw content without filtering - store as-is (with encoding fixes)
+      const processedResult = await this.processRawContent(cleanUrl, cleanedContent);
+      
+      // Store in S3 with new folder structure
+      await this.storeContentAsFiles(processedResult);
       
       // Note: Knowledge base sync will be triggered manually or at the end of crawling process
       // to avoid concurrent ingestion job conflicts
@@ -162,12 +173,14 @@ class ExternalScrapingService {
         title: processedResult.title || 'Untitled',
         timestamp: new Date().toISOString(),
         metadata: {
-          contentHash: processedResult.contentHash,
           domain: processedResult.domain,
-          source: 'external-scraper'
+          source: 'external-scraper',
+          folderPath: processedResult.folderPath,
+          datasourceFile: processedResult.datasourceFile,
+          filesCreated: processedResult.filesCreated
         },
         content: {
-          chunks: processedResult.chunks
+          files: processedResult.files
         }
       };
 
@@ -213,8 +226,11 @@ class ExternalScrapingService {
       try {
         const requestPayload = {
           url: cleanUrl,
-          maxDepth: options.maxDepth || 1
+          maxDepth: options.maxDepth || 10,
+          chunkSize: options.chunkSize || 10000
         };
+
+        logger.debug('Enhanced crawl payload:', requestPayload);
 
         // Use 20-minute timeout for long-running crawl operations
         const response = await this.api.post('/enhanced-crawl', requestPayload, {
@@ -516,6 +532,50 @@ class ExternalScrapingService {
   }
 
   /**
+   * Check if content appears to be corrupted or encoded
+   * @param {string} content - Content to check
+   * @returns {boolean} - True if content appears corrupted
+   */
+  isCorruptedContent(content) {
+    if (!content || typeof content !== 'string') {
+      return true;
+    }
+    
+    // Check for corrupted content patterns (be more specific to avoid false positives)
+    const corruptedPatterns = [
+      /^#content\s*!\s*base64,/i,          // Exact base64 marker pattern (with comma)
+      /^data:[\w\/\+]+;base64,/i,          // Data URL with base64
+      /^[A-Za-z0-9+\/=]{100,}$/,           // Pure base64 string (100+ chars, longer threshold)
+      /^[\+\/=\w]{30,}\+{3,}[\+\/=\w]*$/,  // Base64-like with 3+ consecutive + signs
+      /^CiAgPGRlZnM+/i,                    // Specific base64 pattern we saw previously
+      /^\s*\+CiAgPGRlZnM/i,               // The exact corrupted pattern from before
+      /^[+]{3,}[A-Za-z0-9+\/=]{20,}/,     // Starts with 3+ plus signs
+      /PGRlZnM.*PHN0eWxl.*PHNjcmlwdA/i,   // Multiple base64 HTML tags together
+    ];
+
+    // Check for suspicious patterns that indicate corrupted content
+    const hasCorruptedPattern = corruptedPatterns.some(pattern => pattern.test(content.trim()));
+    
+    // Check for extremely low readable text ratio (include more characters as "readable")
+    const readableChars = (content.match(/[a-zA-Z\s.,!?;:()'"\-\[\]#]/g) || []).length;
+    const totalChars = content.length;
+    const readableRatio = totalChars > 0 ? readableChars / totalChars : 0;
+    
+    // Content is corrupted only if it matches specific patterns OR has extremely low readable ratio
+    const isCorrupted = hasCorruptedPattern || (totalChars > 50 && readableRatio < 0.2);
+    
+    if (isCorrupted) {
+      logger.warn('Corrupted content detected:', {
+        hasCorruptedPattern,
+        readableRatio: readableRatio.toFixed(3),
+        contentPreview: content.substring(0, 100)
+      });
+    }
+    
+    return isCorrupted;
+  }
+
+  /**
    * Process plain text content from external scraping service
    * @param {string} url - Source URL
    * @param {string} plainText - Plain text content
@@ -526,6 +586,15 @@ class ExternalScrapingService {
     const timestamp = new Date().toISOString();
     
     logger.debug('Processing plain text content from:', url);
+    
+    // Check for corrupted/encoded content patterns
+    if (this.isCorruptedContent(plainText)) {
+      logger.error(`Corrupted content detected from external API for: ${url}`, {
+        contentPreview: plainText.substring(0, 200),
+        contentLength: plainText.length
+      });
+      throw new Error(`External API returned corrupted/encoded content for ${url}. Content starts with: ${plainText.substring(0, 50)}`);
+    }
     
     // Clean and normalize the plain text
     const cleanedContent = this.cleanExtractedText(plainText);
@@ -589,6 +658,15 @@ class ExternalScrapingService {
     
     logger.debug('Processing content from:', url);
     logger.debug('Raw content length:', rawContent.length);
+    
+    // Check for corrupted content first (before HTML/text detection)
+    if (this.isCorruptedContent(rawContent)) {
+      logger.error(`Corrupted content detected from external API for: ${url}`, {
+        contentPreview: rawContent.substring(0, 200),
+        contentLength: rawContent.length
+      });
+      throw new Error(`External API returned corrupted/encoded content for ${url}. Content starts with: ${rawContent.substring(0, 50)}`);
+    }
     
     // Detect if content is HTML or plain text
     const isHtml = this.isHtmlContent(rawContent);
@@ -1077,6 +1155,479 @@ class ExternalScrapingService {
   }
 
   /**
+   * Clean up common encoding issues from external scraper
+   * @param {string} content - Raw content from external service
+   * @returns {string} - Content with encoding issues fixed
+   */
+  cleanEncodingIssues(content) {
+    if (!content || typeof content !== 'string') {
+      return content;
+    }
+
+    logger.info('Cleaning encoding issues from content');
+    
+    let cleaned = content;
+    
+    // Fix common encoding issues
+    const encodingFixes = {
+      // Fix UTF-8 encoding issues
+      'â˜°': '☰',  // Hamburger menu icon
+      'â': '',     // Remove stray â characters
+      '˜': '~',    // Fix tilde
+      '°': '°',    // Fix degree symbol
+      'â€™': "'",  // Right single quotation mark
+      'â€œ': '"',  // Left double quotation mark  
+      'â€': '"',   // Right double quotation mark
+      'â€"': '–',  // En dash
+      'â€"': '—',  // Em dash
+      'Â©': '©',   // Copyright symbol
+      'Â®': '®',   // Registered trademark
+      'Â': '',     // Remove stray Â characters
+    };
+
+    // Apply encoding fixes
+    for (const [encoded, decoded] of Object.entries(encodingFixes)) {
+      cleaned = cleaned.replace(new RegExp(encoded, 'g'), decoded);
+    }
+
+    // Remove extra whitespace and normalize line breaks
+    cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    
+    logger.info('Encoding cleanup completed:', {
+      originalLength: content.length,
+      cleanedLength: cleaned.length,
+      hasEncodingIssues: cleaned !== content,
+      sampleBefore: content.substring(0, 100),
+      sampleAfter: cleaned.substring(0, 100)
+    });
+
+    return cleaned;
+  }
+
+  /**
+   * Process raw content without filtering - store as-is
+   * @param {string} url - Source URL
+   * @param {string} rawContent - Raw content from external scraper
+   * @returns {Promise<Object>} - Processed data for storage
+   */
+  async processRawContent(url, rawContent) {
+    const domain = new URL(url).hostname;
+    const timestamp = new Date().toISOString();
+    
+    logger.debug('Processing raw content from:', url);
+    logger.debug('Raw content length:', rawContent.length);
+    
+    // Extract title from content (simple extraction)
+    let title = 'Untitled';
+    try {
+      // Try to extract title from HTML if it's HTML content
+      if (rawContent.includes('<title>')) {
+        const titleMatch = rawContent.match(/<title[^>]*>(.*?)<\/title>/i);
+        if (titleMatch && titleMatch[1]) {
+          title = titleMatch[1].trim();
+        }
+      } else {
+        // For plain text, use first line as title
+        const firstLine = rawContent.split('\n')[0].trim();
+        if (firstLine.length > 0 && firstLine.length < 100) {
+          title = firstLine;
+        }
+      }
+    } catch (error) {
+      logger.warn('Could not extract title, using default:', error.message);
+    }
+    
+    // Sanitize title for file names
+    const sanitizedTitle = this.sanitizeTitle(title);
+    
+    logger.info(`Processed raw content from ${url}: ready for storage`);
+    
+    // Create a single file object that will be processed by storage function
+    const fileData = {
+      content: rawContent,
+      metadata: {
+        id: domain.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '-'),
+        type: 'web',
+        display_name: url,
+        title: sanitizedTitle,
+        source_url: url,
+        created_at: timestamp,
+        updated_at: timestamp,
+        contentLength: rawContent.length,
+        contentHash: generateHash(rawContent)
+      }
+    };
+    
+    return {
+      url,
+      domain,
+      title: sanitizedTitle,
+      originalTitle: title,
+      content: rawContent,
+      files: [fileData], // Single file that will be chunked during storage
+      timestamp,
+      metadata: {
+        scrapedAt: timestamp,
+        source: 'external-scraper',
+        originalContentLength: rawContent.length,
+        filesCreated: 1,
+        extractionMethod: 'raw-content'
+      }
+    };
+  }
+
+  /**
+   * Sanitize title for file names
+   * @param {string} title - Original title
+   * @returns {string} - Sanitized title
+   */
+  sanitizeTitle(title) {
+    if (!title || typeof title !== 'string') {
+      return 'untitled';
+    }
+    
+    return title
+      // Replace spaces with underscores
+      .replace(/\s+/g, '_')
+      // Remove or replace problematic characters for file names
+      .replace(/[<>:"/\\|?*]/g, '_')
+      // Remove control characters
+      .replace(/[\x00-\x1f\x80-\x9f]/g, '')
+      // Limit length
+      .substring(0, 100)
+      // Remove trailing underscores
+      .replace(/^_+|_+$/g, '')
+      // Ensure we have something
+      || 'untitled';
+  }
+
+  /**
+   * Create simple content chunks based on character limits
+   * @param {string} content - Full content
+   * @param {string} url - Source URL  
+   * @param {string} sanitizedTitle - Sanitized title
+   * @param {string} domain - Domain name
+   * @returns {Array} - Array of file objects
+   */
+  createSimpleChunks(content, url, sanitizedTitle, domain) {
+    const files = [];
+    const maxChunkSize = 15000; // Maximum 15,000 characters per file
+    const minChunkSize = 10000; // Minimum 10,000 characters per file (when possible)
+    
+    if (!content || content.length === 0) {
+      return files;
+    }
+
+    // If content is small enough, create single file
+    if (content.length <= maxChunkSize) {
+      const contentHash = generateHash(content);
+      const currentTimestamp = new Date().toISOString();
+      
+      files.push({
+        fileName: `${sanitizedTitle}.txt`,
+        content: content,
+        metadata: {
+          id: domain.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '-'),
+          type: 'web',
+          display_name: url,
+          title: sanitizedTitle,
+          source_url: url,
+          created_at: currentTimestamp,
+          updated_at: currentTimestamp,
+          part: 1,
+          totalParts: 1,
+          contentLength: content.length,
+          contentHash: contentHash
+        }
+      });
+      return files;
+    }
+
+    // Split content into chunks
+    let chunkIndex = 1;
+    let startIndex = 0;
+    
+    while (startIndex < content.length) {
+      let endIndex = Math.min(startIndex + maxChunkSize, content.length);
+      
+      // If we're not at the end, try to find a good break point
+      if (endIndex < content.length) {
+        // Look for paragraph breaks
+        let breakPoint = content.lastIndexOf('\n\n', endIndex);
+        if (breakPoint > startIndex + minChunkSize) {
+          endIndex = breakPoint;
+        } else {
+          // Look for sentence breaks
+          breakPoint = content.lastIndexOf('. ', endIndex);
+          if (breakPoint > startIndex + minChunkSize) {
+            endIndex = breakPoint + 1;
+          } else {
+            // Look for any line break
+            breakPoint = content.lastIndexOf('\n', endIndex);
+            if (breakPoint > startIndex + minChunkSize) {
+              endIndex = breakPoint;
+            }
+            // Otherwise just split at maxChunkSize
+          }
+        }
+      }
+      
+      const chunkContent = content.substring(startIndex, endIndex).trim();
+      
+      if (chunkContent.length > 0) {
+        const totalParts = Math.ceil(content.length / maxChunkSize);
+        const partSuffix = totalParts > 1 ? `-part${chunkIndex}` : '';
+        const chunkHash = generateHash(chunkContent);
+        const currentTimestamp = new Date().toISOString();
+        
+        files.push({
+          fileName: `${sanitizedTitle}${partSuffix}.txt`,
+          content: chunkContent,
+          metadata: {
+            id: domain.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '-'),
+            type: 'web',
+            display_name: url,
+            title: sanitizedTitle,
+            source_url: url,
+            created_at: currentTimestamp,
+            updated_at: currentTimestamp,
+            part: chunkIndex,
+            totalParts: totalParts,
+            contentLength: chunkContent.length,
+            contentHash: chunkHash
+          }
+        });
+        
+        chunkIndex++;
+      }
+      
+      startIndex = endIndex;
+    }
+    
+    return files;
+  }
+
+  /**
+   * Check if URL points to a document (PDF, DOC, etc.) vs webpage
+   * @param {string} url - URL to check
+   * @returns {boolean} - True if document, false if webpage
+   */
+  isDocumentUrl(url) {
+    const documentExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'];
+    const urlLower = url.toLowerCase();
+    return documentExtensions.some(ext => urlLower.includes(ext));
+  }
+
+  /**
+   * Generate clean filename from URL
+   * @param {string} url - Source URL
+   * @param {boolean} isDocument - Whether this is a document
+   * @returns {string} - Clean filename
+   */
+  generateFileNameFromUrl(url, isDocument) {
+    try {
+      const urlObj = new URL(url);
+      let path = urlObj.pathname;
+      
+      // Handle root/home page
+      if (path === '/' || path === '') {
+        return 'index';
+      }
+      
+      // Remove leading slash and clean up path
+      path = path.replace(/^\/+/, '').replace(/\/+$/, '');
+      
+      if (isDocument) {
+        // For documents, use the filename without extension
+        const fileName = path.split('/').pop();
+        return fileName.replace(/\.[^.]+$/, ''); // Remove extension
+      } else {
+        // For webpages, use path segments
+        return path.replace(/\//g, '-').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-') || 'page';
+      }
+    } catch (error) {
+      logger.warn(`Error generating filename from URL ${url}:`, error.message);
+      return isDocument ? 'document' : 'page';
+    }
+  }
+
+  /**
+   * Create chunks from content with hashes
+   * @param {string} content - Content to chunk
+   * @returns {Array} - Array of chunks with hashes
+   */
+  createChunksFromContent(content) {
+    const chunks = [];
+    const maxChunkSize = 15000; // Same as before
+    const minChunkSize = 10000;
+    
+    if (!content || content.length === 0) {
+      return chunks;
+    }
+
+    // If content is small enough, create single chunk
+    if (content.length <= maxChunkSize) {
+      chunks.push({
+        id: generateHash(content).substring(0, 12), // First 12 chars of hash as ID
+        text: content,
+        hash: generateHash(content)
+      });
+      return chunks;
+    }
+
+    // Split content into chunks
+    let startIndex = 0;
+    let chunkNumber = 1;
+    
+    while (startIndex < content.length) {
+      let endIndex = Math.min(startIndex + maxChunkSize, content.length);
+      
+      // Try to find good break points (same logic as before)
+      if (endIndex < content.length) {
+        let breakPoint = content.lastIndexOf('\n\n', endIndex);
+        if (breakPoint > startIndex + minChunkSize) {
+          endIndex = breakPoint;
+        } else {
+          breakPoint = content.lastIndexOf('. ', endIndex);
+          if (breakPoint > startIndex + minChunkSize) {
+            endIndex = breakPoint + 1;
+          } else {
+            breakPoint = content.lastIndexOf('\n', endIndex);
+            if (breakPoint > startIndex + minChunkSize) {
+              endIndex = breakPoint;
+            }
+          }
+        }
+      }
+      
+      const chunkContent = content.substring(startIndex, endIndex).trim();
+      
+      if (chunkContent.length > 0) {
+        const chunkHash = generateHash(chunkContent);
+        chunks.push({
+          id: `${chunkHash.substring(0, 8)}_${chunkNumber}`, // Short hash + number
+          text: chunkContent,
+          hash: chunkHash
+        });
+        chunkNumber++;
+      }
+      
+      startIndex = endIndex;
+    }
+    
+    return chunks;
+  }
+
+  /**
+   * Store content using proper datasource structure with subfolders
+   * @param {Object} processedData - Processed data from processRawContent
+   */
+  async storeContentAsFiles(processedData) {
+    try {
+      const { domain, files, url } = processedData;
+      const storedFiles = [];
+      
+      // Create proper datasource structure: datasources/ansar-portfolio-pages-dev/
+      const datasourceId = domain.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '-');
+      const datasourcePath = `datasources/${datasourceId}`;
+      
+      // Create datasource.json (master metadata)
+      const datasourceKey = `${datasourcePath}/datasource.json`;
+      const datasourceContent = {
+        id: datasourceId,
+        type: 'web',
+        display_name: `https://${domain}`,
+        source_url: url,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        documents: [] // Will be populated with actual document paths
+      };
+      
+      // Process each file and organize by type
+      const documentPaths = [];
+      
+      for (const file of files) {
+        // Determine content type and subfolder
+        const sourceUrl = file.metadata.source_url;
+        const isDocument = this.isDocumentUrl(sourceUrl);
+        const subfolder = isDocument ? 'documents' : 'webpages';
+        
+        // Generate filename based on URL path
+        const fileName = this.generateFileNameFromUrl(sourceUrl, isDocument);
+        const jsonKey = `${datasourcePath}/${subfolder}/${fileName}.json`;
+        
+        // Create chunked content structure
+        const pageContent = {
+          url: sourceUrl,
+          title: file.metadata.title,
+          chunks: this.createChunksFromContent(file.content),
+          last_scraped: new Date().toISOString(),
+          content_hash: file.metadata.contentHash,
+          content_length: file.metadata.contentLength
+        };
+        
+        // Store the page JSON file
+        await this.s3Client.send(new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: jsonKey,
+          Body: JSON.stringify(pageContent, null, 2),
+          ContentType: 'application/json',
+          Metadata: {
+            "source-type": isDocument ? 'document-content' : 'webpage-content',
+            "domain": domain,
+            "datasource": datasourceId,
+            "type": 'content-json',
+            "scraped-at": new Date().toISOString()
+          }
+        }));
+        
+        // Add to document paths for datasource.json
+        documentPaths.push(`${subfolder}/${fileName}.json`);
+        
+        storedFiles.push({
+          contentFile: jsonKey,
+          size: file.content.length,
+          type: isDocument ? 'document' : 'webpage'
+        });
+        
+        logger.info(`Stored: ${jsonKey} (${file.content.length} chars)`);
+      }
+      
+      // Update datasource.json with document paths
+      datasourceContent.documents = documentPaths;
+      
+      // Create/update datasource.json 
+      await this.s3Client.send(new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: datasourceKey,
+        Body: JSON.stringify(datasourceContent, null, 2),
+        ContentType: 'application/json',
+        Metadata: {
+          "source-type": 'datasource-config',
+          "domain": domain,
+          "datasource": datasourceId,
+          "type": 'datasource',
+          "created-at": new Date().toISOString()
+        }
+      }));
+      
+      // Update processedData with storage results
+      processedData.filesCreated = storedFiles;
+      processedData.datasourceFile = datasourceKey;
+      processedData.folderPath = datasourcePath;
+      
+      logger.info(`Successfully stored ${files.length} files for ${domain} in datasource structure: ${datasourcePath}`);
+      logger.info(`Datasource configuration: ${datasourceKey}`);
+      logger.info(`Datasource ID: ${datasourceId}`);
+      logger.info(`Document paths: ${documentPaths.join(', ')}`);
+      
+    } catch (error) {
+      logger.error('Error storing content as files:', error);
+      throw new Error(`Failed to store content as files: ${error.message}`);
+    }
+  }
+
+  /**
    * Create intelligent content chunks for vector storage
    * Optimized for semantic search and retrieval with enhanced context preservation
    * @param {string} content - Full content text
@@ -1311,92 +1862,85 @@ class ExternalScrapingService {
     const content = chunk.content;
     const metadata = chunk.metadata || {};
     
-    // Quality checks
-    const hasMinimumContent = content.length >= 300; // Minimum content for meaningful chunks
-    const hasReasonableWordsRatio = (content.match(/[a-zA-Z]{3,}/g) || []).length / content.length > 0.05;
-    const hasMetadata = metadata.url && metadata.title;
-    const hasGoodDensity = metadata.contentDensity && metadata.contentDensity > 10; // At least 10% content utilization for quality
+    // Relaxed quality checks to match BedrockKnowledgeBaseService standards
+    const hasMinimumContent = content.length >= 50; // Further reduced to match new chunking logic
+    const hasReasonableWordsRatio = (content.match(/[a-zA-Z]{3,}/g) || []).length / content.length > 0.02; // More relaxed ratio
+    const hasBasicMetadata = metadata.url || metadata.title; // Either URL or title is sufficient
     
-    return hasMinimumContent && hasReasonableWordsRatio && hasMetadata && hasGoodDensity;
+    // For very short content (like contact pages), be more lenient
+    if (content.length < 200) {
+      return hasMinimumContent && hasReasonableWordsRatio && hasBasicMetadata;
+    }
+    
+    // For longer content, maintain quality standards
+    const hasGoodDensity = !metadata.contentDensity || metadata.contentDensity > 5; // More lenient density check
+    return hasMinimumContent && hasReasonableWordsRatio && hasBasicMetadata && hasGoodDensity;
   }
 
   /**
-   * Store processed data using Bedrock Knowledge Base Service (optimized S3 format)
+   * Sanitize metadata value for S3 headers
+   * @param {string} value - The metadata value to sanitize
+   * @param {number} maxLength - Maximum length (default 1000)
+   * @returns {string} - Sanitized value safe for S3 metadata
+   */
+  sanitizeMetadataValue(value, maxLength = 1000) {
+    if (!value) return 'Untitled';
+    
+    // Convert to string and remove invalid characters for S3 metadata
+    return String(value)
+      // Remove non-ASCII characters
+      .replace(/[^\x20-\x7E]/g, '')
+      // Remove control characters and problematic chars
+      .replace(/[\r\n\t\f\v]/g, ' ')
+      // Replace multiple spaces with single space
+      .replace(/\s+/g, ' ')
+      // Trim whitespace
+      .trim()
+      // Limit length
+      .substring(0, maxLength) || 'Untitled';
+  }
+
+  /**
+   * Store processed data using Bedrock Knowledge Base compliant structure
+   * Creates both document and required .metadata.json sidecar files
    * @param {Object} processedData - Processed scraping data
    */
   async storeInS3(processedData) {
     try {
-      const domain = processedData.domain;
-      const timestamp = processedData.timestamp;
-      const urlHash = generateHash(processedData.url);
-      
-      // Store raw content backup for reference (follows correct S3 structure)
-      const rawKey = `raw-content/web-scrapes/${domain}/${timestamp.split('T')[0]}/${urlHash}.json`;
-      await this.s3Client.send(new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: rawKey,
-        Body: JSON.stringify({
-          content_id: urlHash,
-          source_type: 'web_scrape',
-          source_url: processedData.url,
-          title: processedData.title,
-          content: processedData.content,
-          chunks: processedData.chunks.map((chunk, index) => ({
-            chunk_id: `${urlHash}-${index + 1}`,
-            content: chunk.content,
-            chunk_index: index + 1,
-            word_count: chunk.content.split(/\s+/).length,
-            metadata: {
-              section: `chunk-${index + 1}`,
-              chunkId: chunk.chunkId
-            }
-          })),
-          processed_timestamp: timestamp,
-          content_hash: processedData.contentHash,
-          file_type: 'html',
-          language: 'en'
-        }),
-        ContentType: 'application/json',
-        Metadata: {
-          domain: domain,
-          url: processedData.url,
-          title: processedData.title || 'Untitled',
-          contentHash: processedData.contentHash,
-          chunkCount: String(processedData.chunks.length),
-          scrapedAt: timestamp,
-          source: 'external-scraper'
-        }
-      }));
-      
-      // Use the optimized Bedrock Knowledge Base Service for main storage
+      // Use the new Bedrock compliant storage that creates proper datasource folders
+      // and sidecar metadata files following exact Bedrock KB requirements
       const document = {
         content: processedData.content,
         title: processedData.title,
         url: processedData.url,
         metadata: {
           ...processedData.metadata,
-          domain: domain,
-          contentHash: processedData.contentHash,
-          scrapedAt: timestamp,
-          source: 'external-scraper',
-          extractionMethod: 'web-scraping'
+          source: 'external-scraper'
         }
       };
       
-      const kbResult = await bedrockKnowledgeBaseService.storeDocument(document);
+      const result = await bedrockCompliantStorage.storeDocument(document);
       
-      logger.info(`Stored scraped content optimally: ${kbResult.s3Key} with ${kbResult.chunkCount} chunks`);
+      logger.info(`Stored scraped content with Bedrock compliant structure:`);
+      logger.info(`  Document: ${result.documentPath}`);
+      logger.info(`  Metadata: ${result.metadataPath}`);
+      logger.info(`  Datasource: ${result.datasource}`);
       
       return {
-        ...kbResult,
-        rawKey,
-        domain,
-        chunkCount: kbResult.chunkCount
+        success: result.success,
+        documentPath: result.documentPath,
+        metadataPath: result.metadataPath,
+        datasource: result.datasource,
+        type: result.type,
+        metadata: result.metadata,
+        contentLength: result.contentLength,
+        verification: result.verification,
+        bedrockCompliant: true
       };
       
     } catch (error) {
-      logger.error('Error storing data in S3:', error);
-      throw new Error(`Failed to store data in S3: ${error.message}`);
+      logger.error('Error storing data with Bedrock compliant structure:', error);
+      throw new Error(`Failed to store data with Bedrock compliant structure: ${error.message}`);
     }
   }
 
@@ -1405,7 +1949,7 @@ class ExternalScrapingService {
    */
   generateCrawlSummary(domain, discovery, results, errors, options) {
     const totalScraped = results.length;
-    const totalChunks = results.reduce((sum, result) => sum + (result.content?.chunks?.length || 0), 0);
+    const totalFiles = results.reduce((sum, result) => sum + (result.content?.files?.length || 0), 0);
     const successRate = `${((totalScraped / discovery.discoveredUrls.length) * 100).toFixed(1)}%`;
     
     return {
@@ -1425,8 +1969,10 @@ class ExternalScrapingService {
         errors: errors.length
       },
       contentStats: {
-        totalChunks,
-        averageChunksPerPage: totalScraped > 0 ? Math.round(totalChunks / totalScraped) : 0
+        totalFiles,
+        averageFilesPerPage: totalScraped > 0 ? Math.round(totalFiles / totalScraped) : 0,
+        storageLocation: `datasources/${domain.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '-')}/`,
+        fileFormat: 'JSON files with chunked content in webpages/ and documents/ subfolders'
       },
       scrapedPages: results,
       errors,
@@ -1441,7 +1987,7 @@ class ExternalScrapingService {
   }
 
   /**
-   * Store crawl metadata
+   * Store crawl metadata in metadata/{domain}/ folder
    */
   async storeCrawlMetadata(summary) {
     try {
@@ -1450,8 +1996,18 @@ class ExternalScrapingService {
       await this.s3Client.send(new PutObjectCommand({
         Bucket: this.bucket,
         Key: metadataKey,
-        Body: JSON.stringify(summary),
-        ContentType: 'application/json'
+        Body: JSON.stringify(summary, null, 2),
+        ContentType: 'application/json',
+        Metadata: {
+          "source-type": 'crawl-metadata',
+          "domain": summary.domain,
+          "datasource": summary.domain,
+          "type": 'metadata',
+          "category": 'crawl-summary',
+          "total-pages-scraped": String(summary.crawlingStats?.totalPagesScraped || 0),
+          "success-rate": summary.crawlingStats?.successRate || 'unknown',
+          "crawled-at": summary.timestamp
+        }
       }));
       
       logger.info(`Stored crawl metadata: ${metadataKey}`);

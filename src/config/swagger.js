@@ -5,12 +5,12 @@ const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'Oralia AI Chatbot API',
+      title: 'chatbot AI Chatbot API',
       version: '1.0.0',
-      description: 'Comprehensive API documentation for Oralia AI Chatbot with AWS Bedrock integration, web scraping, file processing, and data management capabilities.',
+      description: 'Comprehensive API documentation for chatbot AI Chatbot with AWS Bedrock integration, web scraping, file processing, and data management capabilities.',
       contact: {
         name: 'API Support',
-        email: 'support@oralia.ai'
+        email: 'support@chatbot.ai'
       },
       license: {
         name: 'MIT',
@@ -424,6 +424,94 @@ const options = {
               }
             }
           }
+        },
+        DatasourceRegistry: {
+          type: 'object',
+          description: 'Datasource registry object from datasource.json files',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Datasource identifier (folder name)',
+              example: 'ansar-portfolio'
+            },
+            type: {
+              type: 'string',
+              enum: ['web', 'pdf', 'doc', 'spreadsheet'],
+              description: 'Type of datasource content',
+              example: 'web'
+            },
+            display_name: {
+              type: 'string',
+              description: 'Exact display name (URL for websites, filename for files)',
+              example: 'https://ansar-portfolio.pages.dev'
+            },
+            source_url: {
+              type: 'string',
+              format: 'uri',
+              description: 'Source URL (original for websites, S3 URL for files)',
+              example: 'https://ansar-portfolio.pages.dev'
+            },
+            created_at: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Creation timestamp',
+              example: '2025-01-28T17:42:25.391Z'
+            },
+            updated_at: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Last update timestamp (if updated)',
+              example: '2025-01-28T18:30:15.123Z'
+            },
+            s3_key: {
+              type: 'string',
+              description: 'S3 key path to the datasource.json file',
+              example: 'websites/ansar-portfolio/datasource.json'
+            },
+            last_modified: {
+              type: 'string',
+              format: 'date-time',
+              description: 'S3 last modified timestamp',
+              example: '2025-01-28T17:42:25.391Z'
+            },
+            type_folder: {
+              type: 'string',
+              enum: ['websites', 'pdfs', 'documents', 'spreadsheets'],
+              description: 'Type folder containing this datasource',
+              example: 'websites'
+            }
+          },
+          required: ['id', 'type', 'display_name', 'created_at']
+        },
+        DatasourcesResponse: {
+          type: 'object',
+          properties: {
+            success: {
+              type: 'boolean',
+              example: true
+            },
+            message: {
+              type: 'string',
+              example: 'Datasources retrieved successfully'
+            },
+            data: {
+              type: 'object',
+              properties: {
+                count: {
+                  type: 'integer',
+                  description: 'Total number of datasources found',
+                  example: 5
+                },
+                datasources: {
+                  type: 'array',
+                  items: {
+                    $ref: '#/components/schemas/DatasourceRegistry'
+                  },
+                  description: 'Array of datasource registry objects'
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -459,6 +547,10 @@ const options = {
       {
         name: 'Action Groups',
         description: 'Automated Action Group creation and management for AWS Bedrock Agents'
+      },
+      {
+        name: 'Bedrock Storage',
+        description: 'Bedrock Knowledge Base compliant storage operations with datasource registry management'
       }
     ]
   },
@@ -495,6 +587,6 @@ module.exports = {
         margin: 20px 0; 
       }
     `,
-    customSiteTitle: 'Oralia AI Chatbot API Documentation'
+    customSiteTitle: 'chatbot AI Chatbot API Documentation'
   }
 };

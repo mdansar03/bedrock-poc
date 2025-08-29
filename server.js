@@ -14,6 +14,7 @@ const filesRoutes = require('./src/routes/files');
 const healthRoutes = require('./src/routes/health');
 const dataManagementRoutes = require('./src/routes/dataManagement');
 const actionGroupRoutes = require('./src/routes/actionGroups');
+const bedrockStorageRoutes = require('./src/routes/bedrockStorage');
 
 // Swagger configuration
 const { specs, swaggerUi, swaggerUiOptions } = require('./src/config/swagger');
@@ -99,6 +100,7 @@ app.use('/api/chat/agent', agentRoutes);
 app.use('/api/agent-instructions', agentInstructionsRoutes);
 app.use('/api/action-groups', actionGroupRoutes);
 app.use('/api/data-management', dataManagementRoutes);
+app.use('/api/bedrock-storage', bedrockStorageRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

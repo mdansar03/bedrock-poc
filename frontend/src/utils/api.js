@@ -514,9 +514,42 @@ export const dataManagementAPI = {
     return response.data;
   },
 
-  // Get available data sources for filtering
+  // Get available data sources for filtering (LEGACY - for backward compatibility)
   getAvailableDataSources: async () => {
     const response = await api.get("/data-management/domains");
+    return response.data;
+  },
+};
+
+// NEW: Bedrock Storage API for datasource.json registry system
+export const bedrockStorageAPI = {
+  // Get all datasources from datasource.json files
+  getAllDatasources: async () => {
+    const response = await api.get("/bedrock-storage/datasources");
+    return response.data;
+  },
+
+  // Get datasources for a specific type
+  getDatasourcesByType: async (type) => {
+    const response = await api.get(`/bedrock-storage/datasources/by-type/${type}`);
+    return response.data;
+  },
+
+  // Get documents by datasource
+  getDocumentsByDatasource: async (datasource) => {
+    const response = await api.get(`/bedrock-storage/datasources/${datasource}/documents`);
+    return response.data;
+  },
+
+  // Get storage statistics
+  getStorageStats: async () => {
+    const response = await api.get("/bedrock-storage/stats");
+    return response.data;
+  },
+
+  // Trigger knowledge base sync
+  syncKnowledgeBase: async () => {
+    const response = await api.post("/bedrock-storage/sync");
     return response.data;
   },
 };

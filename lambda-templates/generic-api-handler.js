@@ -379,7 +379,7 @@ async function makeApiCall(apiUrl, method, params, endpoint) {
       method: method.toUpperCase(),
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'Oralia-AI-Agent/1.0',
+        'User-Agent': 'chatbot-AI-Agent/1.0',
         'Accept': 'application/json'
       }
     };
@@ -440,7 +440,7 @@ async function makeApiCall(apiUrl, method, params, endpoint) {
     });
     
     // Increased timeout to handle cold starts and slow external APIs
-    const timeoutMs = process.env.LAMBDA_HTTP_TIMEOUT_MS || 30000; // 30 seconds default
+    const timeoutMs = parseInt(process.env.LAMBDA_HTTP_TIMEOUT_MS, 10) || 30000; // 30 seconds default
     req.setTimeout(timeoutMs, () => {
       req.abort();
       reject(new Error(`Request timeout after ${timeoutMs/1000} seconds`));
